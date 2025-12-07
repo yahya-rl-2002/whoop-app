@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data & Config (Personal)
+whoop.db
+config.yaml
+*.csv
+*.pdf
+data/
+
+# OS
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Environment
+.venv
+env/
+venv/

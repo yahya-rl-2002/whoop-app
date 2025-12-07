@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whoop Lite (Mobile)</title>
+    <style>
+        body {
+            background-color: #000000;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .metric-box {
+            background-color: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .big-num {
+            font-size: 4rem;
+            font-weight: 800;
+            color: #fff;
+            margin: 0;
+        }
+
+        .label {
+            font-size: 0.9rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn {
+            background-color: #ff3b30;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            border-radius: 30px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 20px;
+            font-weight: bold;
+        }
+
+        .btn:disabled {
+            background-color: #555;
+        }
+
+        #log {
+            font-family: monospace;
+            color: #666;
+            font-size: 0.8rem;
+            margin-top: 20px;
+            text-align: left;
+        }
+
+        .status {
+            color: #4ade80;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+
+    <h2 style="margin-bottom: 5px;">WHOOP LITE</h2>
+    <div id="status" style="color: #888;">Déconnecté</div>
+
+    <div class="metric-box">
+        <div id="bpm" class="big-num">--</div>
+        <div class="label">BPM ACTUEL</div>
+    </div>
+
+    <div class="metric-box">
+        <div id="batt" class="big-num" style="font-size: 2rem; color: #34c759;">--%</div>
+        <div class="label">BATTERIE</div>
+    </div>
+
+    <!-- Graphique Simple -->
+    <canvas id="bpmChart" height="150"
+        style="width: 100%; height: 150px; background: #111; border-radius: 8px;"></canvas>
+
+    <button id="connectBtn" class="btn" onclick="connectWhoop()">🔌 CONNECTER WHOOP</button>
+    <button id="exportBtn" class="btn" style="background-color: #3b82f6; display: none;" onclick="exportCSV()">📄
+        EXPORTER CSV</button>
+
+    <div id="log"></div>
+
+    <script>
+        // UUIDs Standards BLE
+        const HEART_RATE_SERVICE = 0x180D;
+        const HEART_RATE_MEASUREMENT = 0x2A37;
+        const BATTERY_SERVICE = 0x180F;
+        const BATTERY_LEVEL = 0x2A19;
+
+        let device, server;
+        let dataLog = "Timestamp,BPM\n";
+        let bpmHistory = [];
+        let labelsHistory = [];
+        let chart = null;
+
+        // Init ChartJS
+        const ctx = document.getElementById('bpmChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labelsHistory,
+                datasets: [{
+                    label: 'BPM',
+                    data: bpmHistory,
+                    borderColor: '#ff3b30',
+                    borderWidth: 2,
+                    fill: false,
+                    tension: 0.4,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { display: false },
+                    y: { min: 40, max: 200, grid: { color: '#333' } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        function log(msg) {
+            const l = document.getElementById('log');
+            l.innerHTML = `> ${msg}<br>` + l.innerHTML;
+            console.log(msg);
+        }
+
+        async function connectWhoop() {
+            try {
+                log("🔍 Recherche du Whoop...");
+                device = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [HEART_RATE_SERVICE] }],
+                    optionalServices: [BATTERY_SERVICE]
+                });
+
+                log(`Appareil sélectionné: ${device.name}`);
+                document.getElementById('status').innerText = "Connexion...";
+
+                device.addEventListener('gattserverdisconnected', onDisconnected);
+
+                server = await device.gatt.connect();
+                log("✅ Connecté au Serveur GATT");
+                document.getElementById('status').innerText = "🟢 Connecté";
+                document.getElementById('status').style.color = "#4ade80";
+                document.getElementById('connectBtn').style.display = "none";
+                document.getElementById('exportBtn').style.display = "block";
+
+                // Lecture Batterie
+                try {
+                    const batService = await server.getPrimaryService(BATTERY_SERVICE);
+                    const batChar = await batService.getCharacteristic(BATTERY_LEVEL);
+                    const val = await batChar.readValue();
+                    const level = val.getUint8(0);
+                    document.getElementById('batt').innerText = level + "%";
+                } catch (e) { log("Pas de service batterie standard"); }
+
+                // Lecture BPM
+                const hrService = await server.getPrimaryService(HEART_RATE_SERVICE);
+                const hrChar = await hrService.getCharacteristic(HEART_RATE_MEASUREMENT);
+
+                await hrChar.startNotifications();
+                hrChar.addEventListener('characteristicvaluechanged', handleHeartRate);
+                log("💓 Flux BPM Démarré");
+
+            } catch (error) {
+                log(`❌ Erreur: ${error}`);
+                alert("Erreur Connexion: " + error);
+            }
+        }
+
+        function handleHeartRate(event) {
+            const value = event.target.value;
+            const flags = value.getUint8(0);
+            let hr = 0;
+
+            // Format 8 ou 16 bits
+            if (flags & 0x01) {
+                hr = value.getUint16(1, true); // 16 bits
+            } else {
+                hr = value.getUint8(1); // 8 bits
+            }
+
+            document.getElementById('bpm').innerText = hr;
+
+            // Update Graph
+            const now = new Date().toLocaleTimeString();
+            bpmHistory.push(hr);
+            labelsHistory.push(now);
+            if (bpmHistory.length > 50) {
+                bpmHistory.shift();
+                labelsHistory.shift();
+            }
+            chart.update();
+
+            // Log Data (CSV)
+            dataLog += `${new Date().toISOString()},${hr}\n`;
+        }
+
+        function onDisconnected() {
+            log("⚠️ Déconnecté");
+            document.getElementById('status').innerText = "🔴 Déconnecté";
+            document.getElementById('bpm').innerText = "--";
+            document.getElementById('connectBtn').style.display = "block";
+        }
+
+        function exportCSV() {
+            const blob = new Blob([dataLog], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `whoop_session_${new Date().toISOString()}.csv`;
+            a.click();
+        }
+    </script>
+</body>
+
+</html>
