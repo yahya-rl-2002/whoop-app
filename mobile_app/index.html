@@ -73,7 +73,7 @@
 
 <body>
 
-    <h2 style="margin-bottom: 5px;">WHOOP LITE <span style="font-size: 0.8rem; color: #555;">v1.1</span></h2>
+    <h2 style="margin-bottom: 5px;">WHOOP LITE <span style="font-size: 0.8rem; color: #555;">v1.3</span></h2>
 
     <!-- Bouton Connexion en PREMIER -->
     <button id="connectBtn" class="btn"
@@ -101,11 +101,14 @@
     <div id="log"></div>
 
     <script>
-        // UUIDs Standards BLE
-        const HEART_RATE_SERVICE = 0x180D;
-        const HEART_RATE_MEASUREMENT = 0x2A37;
-        const BATTERY_SERVICE = 0x180F;
-        const BATTERY_LEVEL = 0x2A19;
+        // UUIDs Standards BLE (Strings required for some browsers)
+        const HEART_RATE_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb"; // Full UUID is safest
+        const HEART_RATE_MEASUREMENT = "00002a37-0000-1000-8000-00805f9b34fb";
+        const BATTERY_SERVICE = "0000180f-0000-1000-8000-00805f9b34fb";
+        const BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb";
+
+        // Fallback or Aliases
+        const SERVICES_FILTERS = [{ services: [HEART_RATE_SERVICE] }, { services: ['heart_rate'] }, { services: [0x180D] }];
 
         let device, server;
         let dataLog = "Timestamp,BPM\n";
@@ -149,9 +152,10 @@
         async function connectWhoop() {
             try {
                 log("🔍 Recherche du Whoop...");
+                // Bluefy prefers standard aliases or lowercase UUID strings
                 device = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [HEART_RATE_SERVICE] }],
-                    optionalServices: [BATTERY_SERVICE]
+                    filters: [{ services: ['heart_rate'] }],
+                    optionalServices: ['battery_service', 'heart_rate']
                 });
 
                 log(`Appareil sélectionné: ${device.name}`);
