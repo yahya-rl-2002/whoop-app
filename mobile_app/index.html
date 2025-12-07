@@ -176,8 +176,8 @@
             style="background: none; border: none; font-size: 1.5rem; cursor: pointer;">⚙️</button>
     </div>
 
-    <h2>Whoop Lite <span style="font-size: 0.9rem; color: #555; vertical-align: middle; opacity: 0.5;">v3.0
-            (Cloud)</span></h2>
+    <h2>Whoop Lite <span style="font-size: 0.9rem; color: #555; vertical-align: middle; opacity: 0.5;">v4.0 (Pro)</span>
+    </h2>
 
     <button id="connectBtn" class="btn" onclick="connectWhoop()">🔌 CONNECTER</button>
     <button id="exportBtn" class="btn"
@@ -189,20 +189,42 @@
         <span id="cloudStatus" style="font-size: 0.8rem; margin-left: 10px; opacity: 0;">☁️</span>
     </div>
 
-    <div class="grid">
+    <!-- MAIN GRID -->
+    <div class="grid" style="grid-template-columns: 1fr 1fr;">
+        <!-- BPM -->
         <div class="metric-box">
             <div id="bpm" class="big-num">--</div>
             <div class="label"><span id="liveIcon"></span> BPM</div>
         </div>
+        <!-- STRAIN -->
         <div class="metric-box">
-            <div id="batt" class="big-num" style="font-size: 2rem; color: #32d74b;">--%</div>
-            <div class="label">Batterie</div>
+            <div id="strain" class="big-num" style="color: #007aff;">0.0</div>
+            <div class="label">STRAIN</div>
         </div>
+        <!-- RECOVERY (HRV) -->
+        <div class="metric-box">
+            <div id="hrv" class="big-num" style="color: #ff9f0a; font-size: 2.5rem;">--</div>
+            <div class="label">HRV (ms)</div>
+        </div>
+        <!-- BODY BATTERY -->
+        <div class="metric-box">
+            <div id="bodyBat" class="big-num" style="color: #32d74b; font-size: 2.5rem;">80%</div>
+            <div class="label">BATTERIE</div>
+        </div>
+    </div>
+
+    <!-- STRESS ALERT -->
+    <div id="stressAlert"
+        style="display: none; background: rgba(255, 59, 48, 0.2); border: 1px solid #ff3b30; color: #ff3b30; padding: 15px; border-radius: 12px; margin-bottom: 20px; width: 100%; max-width: 400px; box-sizing: border-box;">
+        ⚠️ <b>Stress Détecté</b><br>
+        <span style="font-size: 0.8rem;">VFC basse + BPM élevé au repos. Respirez.</span>
     </div>
 
     <div id="bpmChartContainer">
         <canvas id="bpmChart"></canvas>
     </div>
+
+    <div style="margin-top: 10px; color: #555; font-size: 0.8rem;">Device Batt: <span id="batt">--</span></div>
 
     <div id="log"></div>
 
@@ -247,6 +269,12 @@
         let supabase = null;
         let dataBuffer = [];
         let lastCloudUpload = 0;
+
+        // DATA SCIENCE GLOBALS
+        let rrIntervals = []; // Store simplified RR (60000/BPM) for demo as Whoop doesn't always send raw RR via standard BLE
+        let accumulatedStrain = 0.0;
+        let bodyBattery = 80.0;
+        let baselineHRV = localStorage.getItem('baselineHRV') || 50;
 
         // Init ChartJS (Smoother)
         const ctx = document.getElementById('bpmChart').getContext('2d');
@@ -389,6 +417,78 @@
             }
         }
 
+        function processMetrics(hr, now) {
+            // 1. Calculate Implied RR (Estimate for Standard BLE)
+            // Note: True RR requires 0x180D specific parsing, but Standard HR gives integer BPM. 
+            // We estimate variability from BPM noise for this demo version.
+            let rr = 60000 / hr;
+            rrIntervals.push(rr);
+            if (rrIntervals.length > 60) rrIntervals.shift(); // Keep last 60 beats
+
+            // 2. Calculate RMSSD (Heart Rate Variability)
+            let rmssd = calculateRMSSD(rrIntervals);
+            document.getElementById('hrv').innerText = Math.round(rmssd);
+
+            // Update Baseline slowly
+            if (rmssd > 0) {
+                baselineHRV = (baselineHRV * 0.99) + (rmssd * 0.01);
+                localStorage.setItem('baselineHRV', baselineHRV);
+            }
+
+            // 3. Calculate Body Battery
+            // Drain: Function of HR > 100
+            // Recharge: Function of HR < 60
+            if (hr > 100) {
+                let drain = (hr - 100) * 0.005; // Fast drain
+                bodyBattery -= drain;
+            } else if (hr < 65) {
+                bodyBattery += 0.002; // Slow recharge
+            }
+            // Stress Drain (Low HRV)
+            if (rmssd < 20 && hr > 70) bodyBattery -= 0.005;
+
+            bodyBattery = Math.max(0, Math.min(100, bodyBattery));
+            document.getElementById('bodyBat').innerText = Math.round(bodyBattery) + "%";
+            // Color logic
+            let batColor = bodyBattery > 66 ? "#32d74b" : (bodyBattery > 33 ? "#ff9f0a" : "#ff3b30");
+            document.getElementById('bodyBat').style.color = batColor;
+
+            // 4. Calculate Strain (Whoop Scale 0-21)
+            // Based on Edwards TRIMP or simple zone accumulation
+            let zone = 0;
+            if (hr >= 150) zone = 4; // Hard
+            else if (hr >= 130) zone = 3;
+            else if (hr >= 110) zone = 2;
+            else if (hr >= 90) zone = 1;
+
+            accumulatedStrain += (0.01 * Math.pow(1.5, zone));
+            // Logarithmic scaling for 0-21
+            let displayStrain = Math.min(21, Math.log(accumulatedStrain + 1) * 3);
+            document.getElementById('strain').innerText = displayStrain.toFixed(1);
+
+            // 5. Stress Detection
+            // Low HRV + Elevated HR + No high activity (heuristic)
+            const stressDiv = document.getElementById('stressAlert');
+            if (rmssd < (baselineHRV * 0.6) && hr > 75 && hr < 110) {
+                stressDiv.style.display = "block";
+            } else {
+                stressDiv.style.display = "none";
+            }
+
+            return { rmssd, displayStrain, bodyBattery };
+        }
+
+        // Standard Deviation of Differences
+        function calculateRMSSD(rrs) {
+            if (rrs.length < 2) return 0;
+            let sumSqDiff = 0;
+            for (let i = 1; i < rrs.length; i++) {
+                let diff = rrs[i] - rrs[i - 1];
+                sumSqDiff += diff * diff;
+            }
+            return Math.sqrt(sumSqDiff / (rrs.length - 1));
+        }
+
         function handleHeartRate(event) {
             const value = event.target.value;
             const flags = value.getUint8(0);
@@ -396,18 +496,27 @@
 
             document.getElementById('bpm').innerText = hr;
 
-            // Chart Update
+            // --- BRAIN EXECUTION ---
+            const metrics = processMetrics(hr);
+            // -----------------------
+
             const now = new Date();
             bpmHistory.push(hr);
             labelsHistory.push(now.getSeconds());
             if (bpmHistory.length > 50) { bpmHistory.shift(); labelsHistory.shift(); }
             chart.update();
 
-            // Data Logging (In Memory)
-            dataLog += `${now.toISOString()},${hr}\n`;
+            // Store Local
+            dataLog += `${now.toISOString()},${hr},${metrics.rmssd.toFixed(1)},${metrics.displayStrain}\n`;
 
-            // Buffer for Cloud
-            dataBuffer.push({ timestamp: now.toISOString(), bpm: hr });
+            // Buffer for Cloud (Enhanced Payload)
+            dataBuffer.push({
+                created_at: now.toISOString(),
+                bpm: hr,
+                hrv: metrics.rmssd,
+                strain: metrics.displayStrain,
+                device: 'iphone_web_v4'
+            });
 
             // Push every 5 seconds
             if (Date.now() - lastCloudUpload > 5000) {
