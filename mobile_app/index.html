@@ -3,69 +3,163 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Whoop Lite (Mobile)</title>
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Whoop Lite</title>
     <style>
+        :root {
+            --primary: #ff3b30;
+            --bg: #000000;
+            --card: rgba(28, 28, 30, 0.6);
+            --text-main: #ffffff;
+            --text-sub: #8e8e93;
+        }
+
         body {
-            background-color: #000000;
-            color: #e0e0e0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: linear-gradient(180deg, #1c1c1e 0%, #000000 100%);
+            color: var(--text-main);
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             margin: 0;
             padding: 20px;
-            text-align: center;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-sizing: border-box;
         }
 
-        .metric-box {
-            background-color: #1a1a1a;
-            border: 1px solid #333;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-
-        .big-num {
-            font-size: 4rem;
-            font-weight: 800;
-            color: #fff;
-            margin: 0;
-        }
-
-        .label {
-            font-size: 0.9rem;
-            color: #888;
+        h2 {
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            margin-top: 10px;
+            margin-bottom: 30px;
+            font-size: 1.5rem;
             text-transform: uppercase;
-            letter-spacing: 1px;
         }
 
         .btn {
-            background-color: #ff3b30;
+            background: var(--primary);
             color: white;
             border: none;
-            padding: 15px 30px;
-            font-size: 1.2rem;
-            border-radius: 30px;
+            padding: 18px 30px;
+            font-size: 1.1rem;
+            border-radius: 16px;
             cursor: pointer;
             width: 100%;
-            margin-top: 20px;
-            font-weight: bold;
+            max-width: 400px;
+            margin-bottom: 20px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            box-shadow: 0 8px 20px rgba(255, 59, 48, 0.3);
+            transition: transform 0.1s, opacity 0.2s;
+            -webkit-tap-highlight-color: transparent;
         }
 
-        .btn:disabled {
-            background-color: #555;
+        .btn:active {
+            transform: scale(0.98);
+            opacity: 0.9;
+        }
+
+        .status-dot {
+            height: 10px;
+            width: 10px;
+            background-color: #3a3a3c;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+
+        .status-text {
+            color: var(--text-sub);
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-bottom: 30px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            width: 100%;
+            max-width: 400px;
+            margin-bottom: 20px;
+        }
+
+        .metric-box {
+            background: var(--card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            padding: 25px 15px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .big-num {
+            font-size: 3.5rem;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 5px;
+            letter-spacing: -2px;
+        }
+
+        .label {
+            font-size: 0.75rem;
+            color: var(--text-sub);
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+
+        #bpmChartContainer {
+            width: 100%;
+            max-width: 400px;
+            background: var(--card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            padding: 15px;
+            box-sizing: border-box;
+            height: 200px;
         }
 
         #log {
+            margin-top: auto;
+            color: #333;
+            font-size: 0.7rem;
             font-family: monospace;
-            color: #666;
-            font-size: 0.8rem;
-            margin-top: 20px;
+            max-width: 400px;
+            width: 100%;
             text-align: left;
+            opacity: 0.5;
         }
 
-        .status {
-            color: #4ade80;
-            font-weight: bold;
-            margin-bottom: 20px;
+        /* Animations */
+        @keyframes pulse {
+            0% {
+                opacity: 0.6;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0.6;
+            }
+        }
+
+        .live {
+            animation: pulse 2s infinite;
+            color: #ff3b30;
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -73,51 +167,54 @@
 
 <body>
 
-    <h2 style="margin-bottom: 5px;">WHOOP LITE <span style="font-size: 0.8rem; color: #555;">v1.3</span></h2>
+    <h2>Whoop Lite <span style="font-size: 0.9rem; color: #555; vertical-align: middle; opacity: 0.5;">v2.0</span></h2>
 
-    <!-- Bouton Connexion en PREMIER -->
-    <button id="connectBtn" class="btn"
-        style="background-color: #ff3b30; margin-bottom: 20px; padding: 20px; font-size: 1.3rem; box-shadow: 0 4px 15px rgba(255, 59, 48, 0.4);"
-        onclick="connectWhoop()">🔌 CONNECTER WHOOP</button>
-    <button id="exportBtn" class="btn" style="background-color: #3b82f6; display: none; margin-bottom: 20px;"
+    <button id="connectBtn" class="btn" onclick="connectWhoop()">🔌 CONNECTER</button>
+    <button id="exportBtn" class="btn"
+        style="background-color: #007aff; display: none; box-shadow: 0 8px 20px rgba(0, 122, 255, 0.3);"
         onclick="exportCSV()">📄 EXPORTER CSV</button>
 
-    <div id="status" style="color: #888; margin-bottom: 20px;">Déconnecté</div>
-
-    <div class="metric-box">
-        <div id="bpm" class="big-num">--</div>
-        <div class="label">BPM ACTUEL</div>
+    <div class="status-text">
+        <span id="statDot" class="status-dot"></span><span id="status">Déconnecté</span>
     </div>
 
-    <div class="metric-box">
-        <div id="batt" class="big-num" style="font-size: 2rem; color: #34c759;">--%</div>
-        <div class="label">BATTERIE</div>
+    <div class="grid">
+        <div class="metric-box">
+            <div id="bpm" class="big-num">--</div>
+            <div class="label"><span id="liveIcon"></span> BPM</div>
+        </div>
+        <div class="metric-box">
+            <div id="batt" class="big-num" style="font-size: 2rem; color: #32d74b;">--%</div>
+            <div class="label">Batterie</div>
+        </div>
     </div>
 
-    <!-- Graphique Simple -->
-    <canvas id="bpmChart" height="150"
-        style="width: 100%; height: 150px; background: #111; border-radius: 8px;"></canvas>
+    <div id="bpmChartContainer">
+        <canvas id="bpmChart"></canvas>
+    </div>
 
     <div id="log"></div>
 
     <script>
-        // UUIDs Standards BLE (Strings required for some browsers)
-        const HEART_RATE_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb"; // Full UUID is safest
+        // UUIDs
+        const HEART_RATE_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb";
         const HEART_RATE_MEASUREMENT = "00002a37-0000-1000-8000-00805f9b34fb";
         const BATTERY_SERVICE = "0000180f-0000-1000-8000-00805f9b34fb";
         const BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb";
 
-        // Fallback or Aliases
-        const SERVICES_FILTERS = [{ services: [HEART_RATE_SERVICE] }, { services: ['heart_rate'] }, { services: [0x180D] }];
-
-        let device, server;
+        let server;
         let dataLog = "Timestamp,BPM\n";
         let bpmHistory = [];
         let labelsHistory = [];
         let chart = null;
 
-        // Init ChartJS
+        // Init ChartJS (Smoother)
         const ctx = document.getElementById('bpmChart').getContext('2d');
+        // Gradient fill
+        const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+        gradient.addColorStop(0, 'rgba(255, 59, 48, 0.5)');
+        gradient.addColorStop(1, 'rgba(255, 59, 48, 0)');
+
         chart = new Chart(ctx, {
             type: 'line',
             data: {
@@ -126,8 +223,9 @@
                     label: 'BPM',
                     data: bpmHistory,
                     borderColor: '#ff3b30',
-                    borderWidth: 2,
-                    fill: false,
+                    backgroundColor: gradient,
+                    borderWidth: 3,
+                    fill: true,
                     tension: 0.4,
                     pointRadius: 0
                 }]
@@ -135,101 +233,92 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                animation: false,
                 scales: {
                     x: { display: false },
-                    y: { min: 40, max: 200, grid: { color: '#333' } }
+                    y: { display: true, beginAtZero: false, min: 40, max: 200, grid: { color: 'rgba(255,255,255,0.1)', drawBorder: false } }
                 },
                 plugins: { legend: { display: false } }
             }
         });
 
         function log(msg) {
-            const l = document.getElementById('log');
-            l.innerHTML = `> ${msg}<br>` + l.innerHTML;
             console.log(msg);
+            // document.getElementById('log').innerText = "> " + msg; // Keep UI clean
         }
 
         async function connectWhoop() {
             try {
-                log("🔍 Recherche du Whoop...");
-                // Bluefy prefers standard aliases or lowercase UUID strings
-                device = await navigator.bluetooth.requestDevice({
+                const device = await navigator.bluetooth.requestDevice({
                     filters: [{ services: ['heart_rate'] }],
                     optionalServices: ['battery_service', 'heart_rate']
                 });
 
-                log(`Appareil sélectionné: ${device.name}`);
                 document.getElementById('status').innerText = "Connexion...";
+                document.getElementById('statDot').style.backgroundColor = "#ff9f0a"; // Orange
 
                 device.addEventListener('gattserverdisconnected', onDisconnected);
-
                 server = await device.gatt.connect();
-                log("✅ Connecté au Serveur GATT");
-                document.getElementById('status').innerText = "🟢 Connecté";
-                document.getElementById('status').style.color = "#4ade80";
+
+                // Success UI
+                document.getElementById('status').innerText = "Connecté";
+                document.getElementById('status').style.color = "#32d74b";
+                document.getElementById('statDot').style.backgroundColor = "#32d74b";
                 document.getElementById('connectBtn').style.display = "none";
                 document.getElementById('exportBtn').style.display = "block";
+                document.getElementById('liveIcon').className = "live";
+                document.getElementById('liveIcon').innerText = "♥ ";
 
-                // Lecture Batterie
+                // Battery
                 try {
-                    const batService = await server.getPrimaryService(BATTERY_SERVICE);
-                    const batChar = await batService.getCharacteristic(BATTERY_LEVEL);
+                    const batService = await server.getPrimaryService('battery_service');
+                    const batChar = await batService.getCharacteristic('battery_level');
                     const val = await batChar.readValue();
-                    const level = val.getUint8(0);
-                    document.getElementById('batt').innerText = level + "%";
-                } catch (e) { log("Pas de service batterie standard"); }
+                    document.getElementById('batt').innerText = val.getUint8(0) + "%";
+                } catch (e) { console.warn("No Battery Service"); }
 
-                // Lecture BPM
-                const hrService = await server.getPrimaryService(HEART_RATE_SERVICE);
-                const hrChar = await hrService.getCharacteristic(HEART_RATE_MEASUREMENT);
-
+                // Heart Rate
+                const hrService = await server.getPrimaryService('heart_rate');
+                const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
                 await hrChar.startNotifications();
                 hrChar.addEventListener('characteristicvaluechanged', handleHeartRate);
-                log("💓 Flux BPM Démarré");
 
             } catch (error) {
                 console.error(error);
-                log(`❌ Erreur: ${error}`);
-                // Tentative d'afficher plus de détails
                 let msg = error.message || error.toString();
-                if (msg === "2") msg = "Appareil Introuvable (ou déjà connecté ailleurs ?)";
-                alert("Erreur Connexion:\n" + msg);
+                if (msg.includes("2")) msg = "Appareil non trouvé (Déjà connecté au Mac ?)";
+                alert("Erreur: " + msg);
+                onDisconnected();
             }
         }
 
         function handleHeartRate(event) {
             const value = event.target.value;
             const flags = value.getUint8(0);
-            let hr = 0;
-
-            // Format 8 ou 16 bits
-            if (flags & 0x01) {
-                hr = value.getUint16(1, true); // 16 bits
-            } else {
-                hr = value.getUint8(1); // 8 bits
-            }
+            let hr = (flags & 0x01) ? value.getUint16(1, true) : value.getUint8(1);
 
             document.getElementById('bpm').innerText = hr;
 
-            // Update Graph
-            const now = new Date().toLocaleTimeString();
+            // Chart Update
+            const now = new Date();
             bpmHistory.push(hr);
-            labelsHistory.push(now);
-            if (bpmHistory.length > 50) {
-                bpmHistory.shift();
-                labelsHistory.shift();
-            }
+            labelsHistory.push(now.getSeconds());
+            if (bpmHistory.length > 50) { bpmHistory.shift(); labelsHistory.shift(); }
             chart.update();
 
-            // Log Data (CSV)
-            dataLog += `${new Date().toISOString()},${hr}\n`;
+            // Data Logging (In Memory)
+            dataLog += `${now.toISOString()},${hr}\n`;
         }
 
         function onDisconnected() {
-            log("⚠️ Déconnecté");
-            document.getElementById('status').innerText = "🔴 Déconnecté";
-            document.getElementById('bpm').innerText = "--";
+            document.getElementById('status').innerText = "Déconnecté";
+            document.getElementById('status').style.color = "#888";
+            document.getElementById('statDot').style.backgroundColor = "#ff3b30";
             document.getElementById('connectBtn').style.display = "block";
+            document.getElementById('exportBtn').style.display = "none";
+            document.getElementById('bpm').innerText = "--";
+            document.getElementById('liveIcon').className = "";
+            document.getElementById('liveIcon').innerText = "";
         }
 
         function exportCSV() {
@@ -237,7 +326,7 @@
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `whoop_session_${new Date().toISOString()}.csv`;
+            a.download = `whoop_session_${new Date().toISOString().split('T')[0]}.csv`;
             a.click();
         }
     </script>
