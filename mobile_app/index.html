@@ -601,6 +601,9 @@
             const flags = value.getUint8(0);
             let hr = (flags & 0x01) ? value.getUint16(1, true) : value.getUint8(1);
 
+            // FILTER INVALID DATA (Same as Python)
+            if (hr === 0) return;
+
             document.getElementById('bpm').innerText = hr;
 
             // --- BRAIN EXECUTION ---
