@@ -203,13 +203,23 @@
         </div>
         <!-- RECOVERY (HRV) -->
         <div class="metric-box">
-            <div id="hrv" class="big-num" style="color: #ff9f0a; font-size: 2.5rem;">--</div>
+            <div id="hrv" class="big-num" style="color: #ff9f0a;">--</div>
             <div class="label">HRV (ms)</div>
         </div>
         <!-- BODY BATTERY -->
         <div class="metric-box">
-            <div id="bodyBat" class="big-num" style="color: #32d74b; font-size: 2.5rem;">80%</div>
+            <div id="bodyBat" class="big-num" style="color: #32d74b;">80%</div>
             <div class="label">BATTERIE</div>
+        </div>
+        <!-- STEPS -->
+        <div class="metric-box">
+            <div id="steps" class="big-num" style="color: #bf5af2;">0</div>
+            <div class="label">PAS <span id="gpsActive" style="opacity:0.2">📍</span></div>
+        </div>
+        <!-- DISTANCE -->
+        <div class="metric-box">
+            <div id="dist" class="big-num" style="color: #fff;">0.0</div>
+            <div class="label">KM</div>
         </div>
     </div>
 
@@ -231,10 +241,14 @@
     <!-- SETTINGS MODAL -->
     <div id="settingsModal"
         style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(10px); z-index: 200; align-items: center; justify-content: center;">
-        <div style="background: #1c1c1e; padding: 30px; border-radius: 20px; width: 85%; max-width: 350px;">
-            <h3 style="margin-top: 0;">☁️ Configuration Cloud</h3>
-            <p style="font-size: 0.8rem; color: #aaa;">Entrez vos identifiants Supabase pour activer la synchro 24/7.
-            </p>
+        <div
+            style="background: #1c1c1e; padding: 30px; border-radius: 20px; width: 85%; max-width: 350px; overflow-y: auto; max-height: 80vh;">
+            <h3 style="margin-top: 0;">☁️ Configuration</h3>
+
+            <label style="display: block; text-align: left; font-size: 0.8rem; color: #888; margin-bottom: 5px;">Taille
+                (cm) - Pour les pas</label>
+            <input id="userHeight" type="number" placeholder="175"
+                style="width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #333; background: #000; color: white;">
 
             <label
                 style="display: block; text-align: left; font-size: 0.8rem; color: #888; margin-bottom: 5px;">Supabase
@@ -276,6 +290,13 @@
         let bodyBattery = 80.0;
         let baselineHRV = localStorage.getItem('baselineHRV') || 50;
 
+        let userHeight = 175;
+        let strideLength = 0.7; // calculated
+        let totalSteps = 0;
+        let totalDistanceKm = 0.0;
+        let lastGpsCoords = null; // {lat, lon}
+        let lastGpsTime = 0;
+
         // Init ChartJS (Smoother)
         const ctx = document.getElementById('bpmChart').getContext('2d');
         // Gradient fill
@@ -314,24 +335,85 @@
         window.onload = function () {
             const url = localStorage.getItem('supaUrl');
             const key = localStorage.getItem('supaKey');
+            const h = localStorage.getItem('userHeight');
             if (url && key) {
                 initSupabase(url, key);
                 document.getElementById('supaUrl').value = url;
                 document.getElementById('supaKey').value = key;
+            }
+            if (h) {
+                userHeight = parseInt(h);
+                document.getElementById('userHeight').value = userHeight;
+                calculateStride();
+            } else {
+                calculateStride(); // Default
+            }
+
+            // Start GPS Watch
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(handleGps, (e) => console.warn(e), { enableHighAccuracy: true });
             }
         };
 
         function openSettings() { document.getElementById('settingsModal').style.display = 'flex'; }
         function closeSettings() { document.getElementById('settingsModal').style.display = 'none'; }
 
+        function calculateStride() {
+            // Factor 0.415 from python script
+            strideLength = (userHeight / 100.0) * 0.415;
+            console.log("Stride Length:", strideLength);
+        }
+
         function saveSettings() {
             const url = document.getElementById('supaUrl').value;
             const key = document.getElementById('supaKey').value;
+            const h = document.getElementById('userHeight').value;
+
             localStorage.setItem('supaUrl', url);
             localStorage.setItem('supaKey', key);
-            initSupabase(url, key);
-            closeSettings();
-            alert("Configuration Cloud Sauvegardée !");
+            if (h) localStorage.setItem('userHeight', h);
+
+            window.location.reload(); // Reload to apply everything cleanly
+        }
+
+        // HAVERSINE FORMULA (Distance in Meters)
+        function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
+            const R = 6371000; // Radius of earth in meters
+            const dLat = deg2rad(lat2 - lat1);
+            const dLon = deg2rad(lon2 - lon1);
+            const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const d = R * c;
+            return d;
+        }
+
+        function deg2rad(deg) { return deg * (Math.PI / 180); }
+
+        function handleGps(position) {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+
+            // document.getElementById('gpsIcon').style.opacity = "1.0"; // UI later
+
+            if (lastGpsCoords) {
+                const dist = getDistanceFromLatLonInM(lastGpsCoords.lat, lastGpsCoords.lon, lat, lon);
+                // Filter noise (Only count check > 5m or speed consistent)
+                if (dist > 5.0) {
+                    // Update distance
+                    totalDistanceKm += (dist / 1000.0);
+
+                    // Calc steps from GPS
+                    const steps = Math.floor(dist / strideLength);
+                    totalSteps += steps;
+
+                    lastGpsCoords = { lat, lon };
+                }
+            } else {
+                lastGpsCoords = { lat, lon };
+            }
         }
 
         function initSupabase(url, key) {
@@ -349,7 +431,11 @@
             const payload = dataBuffer.map(d => ({
                 created_at: d.timestamp,
                 bpm: d.bpm,
-                device: 'iphone_web'
+                hrv: d.hrv,
+                strain: d.strain,
+                steps: d.steps,
+                distance_km: d.distance_km,
+                device: 'iphone_web_v4'
             }));
 
             // Clear buffer immediately to avoid duplicates if async lags
@@ -475,6 +561,27 @@
                 stressDiv.style.display = "none";
             }
 
+            // 6. Step Fallback (Indoor/Treadmill)
+            // If GPS hasn't updated in last 5 seconds, assume indoor.
+            // Logic: High HR (>90) -> Est. Cadence
+            const timeSinceGps = Date.now() - lastGpsTime;
+            if (timeSinceGps > 5000 && hr > 90) {
+                // Est. Cadence (60-200)
+                let cadence = 60 + (hr - 90) * 1.2;
+                if (cadence > 200) cadence = 200;
+
+                // Steps per second (we are called ~1/sec)
+                let stepsInc = cadence / 60.0;
+                // Add to total (Integer logic accumulation)
+                // We add probability: e.g. 1.5 steps -> add 1, save 0.5? 
+                // Simple: just round randomly or Accumulate float
+                totalSteps += stepsInc; // Float
+
+                // Update UI (Round)
+                document.getElementById('steps').innerText = Math.floor(totalSteps);
+            }
+            // If GPS is active, UI is updated in handleGps
+
             return { rmssd, displayStrain, bodyBattery };
         }
 
@@ -507,7 +614,7 @@
             chart.update();
 
             // Store Local
-            dataLog += `${now.toISOString()},${hr},${metrics.rmssd.toFixed(1)},${metrics.displayStrain}\n`;
+            dataLog += `${now.toISOString()},${hr},${metrics.rmssd.toFixed(1)},${metrics.displayStrain},${Math.floor(totalSteps)}\n`;
 
             // Buffer for Cloud (Enhanced Payload)
             dataBuffer.push({
@@ -515,7 +622,8 @@
                 bpm: hr,
                 hrv: metrics.rmssd,
                 strain: metrics.displayStrain,
-                device: 'iphone_web_v4'
+                steps: Math.floor(totalSteps),
+                device: 'iphone_web_v5'
             });
 
             // Push every 5 seconds
