@@ -435,7 +435,7 @@
                 strain: d.strain,
                 steps: d.steps,
                 distance_km: d.distance_km,
-                device: 'iphone_web_v4'
+                device: d.device || 'iphone_web_v5'
             }));
 
             // Clear buffer immediately to avoid duplicates if async lags
