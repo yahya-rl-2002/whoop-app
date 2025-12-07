@@ -162,12 +162,20 @@
             color: #ff3b30;
         }
     </style>
+    <!-- Supabase CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
 
-    <h2>Whoop Lite <span style="font-size: 0.9rem; color: #555; vertical-align: middle; opacity: 0.5;">v2.0</span></h2>
+    <div style="position: absolute; top: 20px; right: 20px; z-index: 100;">
+        <button onclick="openSettings()"
+            style="background: none; border: none; font-size: 1.5rem; cursor: pointer;">⚙️</button>
+    </div>
+
+    <h2>Whoop Lite <span style="font-size: 0.9rem; color: #555; vertical-align: middle; opacity: 0.5;">v3.0
+            (Cloud)</span></h2>
 
     <button id="connectBtn" class="btn" onclick="connectWhoop()">🔌 CONNECTER</button>
     <button id="exportBtn" class="btn"
@@ -176,6 +184,7 @@
 
     <div class="status-text">
         <span id="statDot" class="status-dot"></span><span id="status">Déconnecté</span>
+        <span id="cloudStatus" style="font-size: 0.8rem; margin-left: 10px; opacity: 0;">☁️</span>
     </div>
 
     <div class="grid">
@@ -195,6 +204,32 @@
 
     <div id="log"></div>
 
+    <!-- SETTINGS MODAL -->
+    <div id="settingsModal"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(10px); z-index: 200; align-items: center; justify-content: center;">
+        <div style="background: #1c1c1e; padding: 30px; border-radius: 20px; width: 85%; max-width: 350px;">
+            <h3 style="margin-top: 0;">☁️ Configuration Cloud</h3>
+            <p style="font-size: 0.8rem; color: #aaa;">Entrez vos identifiants Supabase pour activer la synchro 24/7.
+            </p>
+
+            <label
+                style="display: block; text-align: left; font-size: 0.8rem; color: #888; margin-bottom: 5px;">Supabase
+                URL</label>
+            <input id="supaUrl" type="text" placeholder="https://xyz.supabase.co"
+                style="width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #333; background: #000; color: white;">
+
+            <label
+                style="display: block; text-align: left; font-size: 0.8rem; color: #888; margin-bottom: 5px;">Supabase
+                Key (Anon)</label>
+            <input id="supaKey" type="password" placeholder="eyJ..."
+                style="width: 100%; padding: 10px; margin-bottom: 20px; border-radius: 8px; border: 1px solid #333; background: #000; color: white;">
+
+            <button onclick="saveSettings()" class="btn" style="margin-bottom: 10px;">Sauvegarder</button>
+            <button onclick="closeSettings()"
+                style="background: none; border: none; color: #ff3b30; font-size: 1rem;">Annuler</button>
+        </div>
+    </div>
+
     <script>
         // UUIDs
         const HEART_RATE_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb";
@@ -207,6 +242,9 @@
         let bpmHistory = [];
         let labelsHistory = [];
         let chart = null;
+        let supabase = null;
+        let dataBuffer = [];
+        let lastCloudUpload = 0;
 
         // Init ChartJS (Smoother)
         const ctx = document.getElementById('bpmChart').getContext('2d');
@@ -241,6 +279,63 @@
                 plugins: { legend: { display: false } }
             }
         });
+
+        // Load Settings on Start
+        window.onload = function () {
+            const url = localStorage.getItem('supaUrl');
+            const key = localStorage.getItem('supaKey');
+            if (url && key) {
+                initSupabase(url, key);
+                document.getElementById('supaUrl').value = url;
+                document.getElementById('supaKey').value = key;
+            }
+        };
+
+        function openSettings() { document.getElementById('settingsModal').style.display = 'flex'; }
+        function closeSettings() { document.getElementById('settingsModal').style.display = 'none'; }
+
+        function saveSettings() {
+            const url = document.getElementById('supaUrl').value;
+            const key = document.getElementById('supaKey').value;
+            localStorage.setItem('supaUrl', url);
+            localStorage.setItem('supaKey', key);
+            initSupabase(url, key);
+            closeSettings();
+            alert("Configuration Cloud Sauvegardée !");
+        }
+
+        function initSupabase(url, key) {
+            try {
+                // @ts-ignore
+                supabase = window.supabase.createClient(url, key);
+                console.log("Supabase Client Initialized");
+                document.getElementById('cloudStatus').style.opacity = "1";
+            } catch (e) { console.error("Supabase Init Error", e); }
+        }
+
+        async function pushToCloud() {
+            if (!supabase || dataBuffer.length === 0) return;
+
+            const payload = dataBuffer.map(d => ({
+                created_at: d.timestamp,
+                bpm: d.bpm,
+                device: 'iphone_web'
+            }));
+
+            // Clear buffer immediately to avoid duplicates if async lags
+            dataBuffer = [];
+
+            const { error } = await supabase.from('measurements').insert(payload);
+
+            if (error) {
+                console.error("Cloud Upload Error", error);
+                document.getElementById('cloudStatus').style.color = "red";
+            } else {
+                console.log("Cloud Upload Success", payload.length);
+                document.getElementById('cloudStatus').style.color = "#007aff"; // Blue success
+                setTimeout(() => document.getElementById('cloudStatus').style.color = "white", 1000);
+            }
+        }
 
         function log(msg) {
             console.log(msg);
@@ -308,6 +403,15 @@
 
             // Data Logging (In Memory)
             dataLog += `${now.toISOString()},${hr}\n`;
+
+            // Buffer for Cloud
+            dataBuffer.push({ timestamp: now.toISOString(), bpm: hr });
+
+            // Push every 5 seconds
+            if (Date.now() - lastCloudUpload > 5000) {
+                pushToCloud();
+                lastCloudUpload = Date.now();
+            }
         }
 
         function onDisconnected() {
