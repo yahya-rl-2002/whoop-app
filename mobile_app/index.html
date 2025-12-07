@@ -184,8 +184,12 @@
                 log("💓 Flux BPM Démarré");
 
             } catch (error) {
+                console.error(error);
                 log(`❌ Erreur: ${error}`);
-                alert("Erreur Connexion: " + error);
+                // Tentative d'afficher plus de détails
+                let msg = error.message || error.toString();
+                if (msg === "2") msg = "Appareil Introuvable (ou déjà connecté ailleurs ?)";
+                alert("Erreur Connexion:\n" + msg);
             }
         }
 
