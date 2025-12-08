@@ -677,6 +677,12 @@
         let totalDistanceKm = 0.0;
         let lastGpsCoords = null; // {lat, lon}
         let lastGpsTime = 0;
+
+        // --- SENSOR FUSION GLOBALS (v7.0) ---
+        let lastAccel = {x:0, y:0, z:0};
+        let lastSensorTime = 0;
+        let sensorSteps = 0;
+        let motionEnabled = false;
         
         // ============================================
         // SYSTÈME D'ALARME / RÉVEIL
@@ -1589,7 +1595,6 @@
             // If GPS hasn't updated in last 5 seconds, assume indoor.
             // Logic: High HR (>90) -> Est. Cadence
             const timeSinceGps = Date.now() - lastGpsTime;
-            const timeSinceGps = Date.now() - lastGpsTime;
             
             // FUSION LOGIC: If Sensors enabled, trust them. Don't guess with HR.
             if (motionEnabled && timeSinceGps > 5000) {
@@ -1630,10 +1635,8 @@
         }
 
         // --- SENSOR FUSION ENGINE (v7.0) ---
-        let lastAccel = {x:0, y:0, z:0};
-        let lastSensorTime = 0;
-        let sensorSteps = 0;
-        let motionEnabled = false;
+        // Globals moved to top to avoid ReferenceError
+
 
         function enableSensors() {
             // iOS 13+ requires explicit permission
