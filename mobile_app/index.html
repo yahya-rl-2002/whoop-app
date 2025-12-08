@@ -167,11 +167,12 @@
     <!-- Supabase CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
 </head>
 
 <body>
 
-    <div style="position: absolute; top: 20px; right: 20px; z-index: 100;">
+    <div style="position: absolute; top: 20px; right: 20px; z-index: 100; display: none;">
         <button onclick="openSettings()"
             style="background: none; border: none; font-size: 1.5rem; cursor: pointer;">⚙️</button>
     </div>
@@ -187,6 +188,7 @@
     <div class="status-text">
         <span id="statDot" class="status-dot"></span><span id="status">Déconnecté</span>
         <span id="cloudStatus" style="font-size: 0.8rem; margin-left: 10px; opacity: 0;">☁️</span>
+        <span id="offlineIndicator" style="font-size: 0.7rem; margin-left: 5px; opacity: 0; color: #ff9f0a;"></span>
     </div>
 
     <!-- MAIN GRID -->
@@ -230,6 +232,15 @@
         <span style="font-size: 0.8rem;">VFC basse + BPM élevé au repos. Respirez.</span>
     </div>
 
+    <!-- Contrôles de période pour le graphique -->
+    <div style="display: flex; gap: 8px; margin-bottom: 10px; width: 100%; max-width: 400px; flex-wrap: wrap; justify-content: center;">
+        <button id="periodBtn15m" onclick="loadChartData(15)" class="period-btn" style="background: #007aff; color: white; border: none; padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; cursor: pointer;">15min</button>
+        <button id="periodBtn1h" onclick="loadChartData(60)" class="period-btn" style="background: #333; color: white; border: none; padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; cursor: pointer;">1h</button>
+        <button id="periodBtn6h" onclick="loadChartData(360)" class="period-btn" style="background: #333; color: white; border: none; padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; cursor: pointer;">6h</button>
+        <button id="periodBtn24h" onclick="loadChartData(1440)" class="period-btn" style="background: #333; color: white; border: none; padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; cursor: pointer;">24h</button>
+        <button id="periodBtnAll" onclick="loadChartData(null)" class="period-btn" style="background: #333; color: white; border: none; padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; cursor: pointer;">Tout</button>
+    </div>
+
     <div id="bpmChartContainer">
         <canvas id="bpmChart"></canvas>
     </div>
@@ -244,6 +255,10 @@
         <div
             style="background: #1c1c1e; padding: 30px; border-radius: 20px; width: 85%; max-width: 350px; overflow-y: auto; max-height: 80vh;">
             <h3 style="margin-top: 0;">☁️ Configuration</h3>
+            
+            <div style="background: rgba(0, 122, 255, 0.1); border: 1px solid #007aff; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-size: 0.8rem; color: #007aff;">
+                ✅ <b>Config automatique:</b> Les données sont enregistrées dans Supabase par défaut. Modifiez ces valeurs uniquement si nécessaire.
+            </div>
 
             <label style="display: block; text-align: left; font-size: 0.8rem; color: #888; margin-bottom: 5px;">Taille
                 (cm) - Pour les pas</label>
@@ -260,7 +275,15 @@
                 style="display: block; text-align: left; font-size: 0.8rem; color: #888; margin-bottom: 5px;">Supabase
                 Key (Anon)</label>
             <input id="supaKey" type="password" placeholder="eyJ..."
+                style="width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #333; background: #000; color: white;">
+            
+            <label
+                style="display: block; text-align: left; font-size: 0.8rem; color: #888; margin-bottom: 5px;">API Locale (Optionnel)</label>
+            <input id="apiUrl" type="text" placeholder="http://192.168.1.100:8000"
                 style="width: 100%; padding: 10px; margin-bottom: 20px; border-radius: 8px; border: 1px solid #333; background: #000; color: white;">
+            <div style="font-size: 0.7rem; color: #666; margin-bottom: 15px;">
+                Pour charger automatiquement la config depuis votre ordinateur
+            </div>
 
             <button onclick="saveSettings()" class="btn" style="margin-bottom: 10px;">Sauvegarder</button>
             <button onclick="closeSettings()"
@@ -280,9 +303,178 @@
         let bpmHistory = [];
         let labelsHistory = [];
         let chart = null;
+        let currentPeriod = 15; // Période par défaut: 15 minutes
+        let historicalData = []; // Données historiques chargées
         let supabase = null;
         let dataBuffer = [];
         let lastCloudUpload = 0;
+        let activeSessionId = null;
+        
+        // ============================================
+        // SYSTÈME DE CACHE OFFLINE
+        // ============================================
+        const OFFLINE_STORAGE_KEY = 'whoop_offline_data';
+        const MAX_OFFLINE_ITEMS = 1000; // Limite de sécurité
+        let isOnline = navigator.onLine;
+        let syncInProgress = false;
+        
+        // Détecter les changements de connexion
+        window.addEventListener('online', () => {
+            isOnline = true;
+            console.log("🌐 Connexion internet rétablie");
+            document.getElementById('cloudStatus').style.color = "#007aff";
+            syncOfflineData(); // Synchroniser automatiquement
+        });
+        
+        window.addEventListener('offline', () => {
+            isOnline = false;
+            console.log("📴 Connexion internet perdue");
+            document.getElementById('cloudStatus').style.color = "#ff3b30";
+            updateConnectionStatus();
+        });
+        
+        // Fonction pour sauvegarder les données offline
+        function saveToOfflineCache(data) {
+            try {
+                let offlineData = JSON.parse(localStorage.getItem(OFFLINE_STORAGE_KEY) || '[]');
+                
+                // Ajouter les nouvelles données
+                offlineData = offlineData.concat(data);
+                
+                // Limiter la taille (garder les plus récentes)
+                if (offlineData.length > MAX_OFFLINE_ITEMS) {
+                    offlineData = offlineData.slice(-MAX_OFFLINE_ITEMS);
+                }
+                
+                localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineData));
+                console.log(`💾 ${data.length} mesures sauvegardées en cache offline (Total: ${offlineData.length})`);
+                updateConnectionStatus();
+                return true;
+            } catch (e) {
+                console.error("Erreur sauvegarde cache:", e);
+                return false;
+            }
+        }
+        
+        // Fonction pour récupérer les données du cache
+        function getOfflineCache() {
+            try {
+                return JSON.parse(localStorage.getItem(OFFLINE_STORAGE_KEY) || '[]');
+            } catch (e) {
+                console.error("Erreur lecture cache:", e);
+                return [];
+            }
+        }
+        
+        // Fonction pour vider le cache
+        function clearOfflineCache() {
+            localStorage.removeItem(OFFLINE_STORAGE_KEY);
+            console.log("🗑️ Cache offline vidé");
+            updateConnectionStatus();
+        }
+        
+        // Fonction pour synchroniser les données offline
+        async function syncOfflineData() {
+            if (!supabase || syncInProgress) return;
+            
+            const offlineData = getOfflineCache();
+            if (offlineData.length === 0) {
+                updateConnectionStatus();
+                return;
+            }
+            
+            syncInProgress = true;
+            console.log(`🔄 Synchronisation de ${offlineData.length} mesures en cache...`);
+            
+            try {
+                // Récupérer ou créer la session active
+                let sessionId = activeSessionId;
+                if (!sessionId) {
+                    await loadActiveSession();
+                    sessionId = activeSessionId;
+                }
+                
+                // Préparer le payload
+                const payload = offlineData.map(d => ({
+                    created_at: d.created_at || d.timestamp,
+                    bpm: d.bpm,
+                    hrv: d.hrv || null,
+                    strain: d.strain || null,
+                    steps: d.steps || 0,
+                    session_id: sessionId,
+                    device: d.device || 'mobile_app'
+                }));
+                
+                // Envoyer par batch de 50 pour éviter les timeouts
+                const batchSize = 50;
+                let successCount = 0;
+                
+                for (let i = 0; i < payload.length; i += batchSize) {
+                    const batch = payload.slice(i, i + batchSize);
+                    const { error } = await supabase.from('measurements').insert(batch);
+                    
+                    if (error) {
+                        console.error(`Erreur upload batch ${i}-${i+batchSize}:`, error);
+                        break; // Arrêter si erreur
+                    }
+                    
+                    successCount += batch.length;
+                }
+                
+                if (successCount === offlineData.length) {
+                    // Tout a été synchronisé, vider le cache
+                    clearOfflineCache();
+                    console.log(`✅ ${successCount} mesures synchronisées avec succès`);
+                    document.getElementById('cloudStatus').style.color = "#32d74b"; // Vert
+                    setTimeout(() => {
+                        document.getElementById('cloudStatus').style.color = "#007aff";
+                    }, 2000);
+                } else {
+                    // Garder les données non synchronisées
+                    const remaining = offlineData.slice(successCount);
+                    localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(remaining));
+                    console.log(`⚠️ ${successCount}/${offlineData.length} mesures synchronisées`);
+                }
+                
+            } catch (e) {
+                console.error("Erreur synchronisation:", e);
+            } finally {
+                syncInProgress = false;
+                updateConnectionStatus();
+            }
+        }
+        
+        // Fonction pour mettre à jour l'affichage du statut
+        function updateConnectionStatus() {
+            const offlineCount = getOfflineCache().length;
+            const statusEl = document.getElementById('cloudStatus');
+            const offlineIndicator = document.getElementById('offlineIndicator');
+            
+            if (!isOnline) {
+                statusEl.style.opacity = "1";
+                statusEl.style.color = "#ff3b30";
+                statusEl.title = `Hors ligne - ${offlineCount} mesures en cache`;
+                if (offlineIndicator) {
+                    offlineIndicator.style.opacity = "1";
+                    offlineIndicator.textContent = `📴 ${offlineCount}`;
+                }
+            } else if (offlineCount > 0) {
+                statusEl.style.opacity = "1";
+                statusEl.style.color = "#ff9f0a";
+                statusEl.title = `${offlineCount} mesures en attente de synchronisation`;
+                if (offlineIndicator) {
+                    offlineIndicator.style.opacity = "1";
+                    offlineIndicator.textContent = `⏳ ${offlineCount}`;
+                }
+            } else if (supabase) {
+                statusEl.style.opacity = "1";
+                statusEl.style.color = "#007aff";
+                statusEl.title = "Connecté à Supabase";
+                if (offlineIndicator) {
+                    offlineIndicator.style.opacity = "0";
+                }
+            }
+        }
 
         // DATA SCIENCE GLOBALS
         let rrIntervals = []; // Store simplified RR (60000/BPM) for demo as Whoop doesn't always send raw RR via standard BLE
@@ -304,16 +496,16 @@
         gradient.addColorStop(0, 'rgba(255, 59, 48, 0.5)');
         gradient.addColorStop(1, 'rgba(255, 59, 48, 0)');
 
+        // Configuration du graphique avec support time scale
         chart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: labelsHistory,
                 datasets: [{
                     label: 'BPM',
-                    data: bpmHistory,
+                    data: [],
                     borderColor: '#ff3b30',
                     backgroundColor: gradient,
-                    borderWidth: 3,
+                    borderWidth: 2,
                     fill: true,
                     tension: 0.4,
                     pointRadius: 0
@@ -322,38 +514,278 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                animation: false,
-                scales: {
-                    x: { display: false },
-                    y: { display: true, beginAtZero: false, min: 40, max: 200, grid: { color: 'rgba(255,255,255,0.1)', drawBorder: false } }
+                animation: {
+                    duration: 0
                 },
-                plugins: { legend: { display: false } }
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                scales: {
+                    x: { 
+                        display: true,
+                        type: 'time',
+                        time: {
+                            unit: currentPeriod <= 60 ? 'minute' : (currentPeriod <= 360 ? 'hour' : 'day'),
+                            displayFormats: {
+                                minute: 'HH:mm',
+                                hour: 'HH:mm',
+                                day: 'MM/DD HH:mm'
+                            }
+                        },
+                        grid: { color: 'rgba(255,255,255,0.1)', drawBorder: false },
+                        ticks: {
+                            color: '#888',
+                            maxRotation: 45,
+                            minRotation: 0,
+                            maxTicksLimit: 10
+                        }
+                    },
+                    y: { 
+                        display: true, 
+                        beginAtZero: false, 
+                        min: 40, 
+                        max: 200, 
+                        grid: { color: 'rgba(255,255,255,0.1)', drawBorder: false },
+                        ticks: {
+                            color: '#888'
+                        }
+                    }
+                },
+                plugins: { 
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#fff',
+                        bodyColor: '#fff',
+                        borderColor: '#ff3b30',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: function(context) {
+                                return 'BPM: ' + context.parsed.y;
+                            }
+                        }
+                    }
+                }
             }
         });
-
-        // Load Settings on Start
-        window.onload = function () {
-            const url = localStorage.getItem('supaUrl');
-            const key = localStorage.getItem('supaKey');
-            const h = localStorage.getItem('userHeight');
-            if (url && key) {
-                initSupabase(url, key);
-                document.getElementById('supaUrl').value = url;
-                document.getElementById('supaKey').value = key;
+        
+        // Charger les données historiques au démarrage
+        async function loadChartData(minutes) {
+            currentPeriod = minutes;
+            
+            // Mettre à jour les boutons actifs
+            document.querySelectorAll('.period-btn').forEach(btn => {
+                btn.style.background = '#333';
+            });
+            if (minutes === 15) document.getElementById('periodBtn15m').style.background = '#007aff';
+            else if (minutes === 60) document.getElementById('periodBtn1h').style.background = '#007aff';
+            else if (minutes === 360) document.getElementById('periodBtn6h').style.background = '#007aff';
+            else if (minutes === 1440) document.getElementById('periodBtn24h').style.background = '#007aff';
+            else if (minutes === null) document.getElementById('periodBtnAll').style.background = '#007aff';
+            
+            if (!supabase || !activeSessionId) {
+                console.log("Supabase non initialisé, utilisation des données en temps réel uniquement");
+                return;
             }
-            if (h) {
-                userHeight = parseInt(h);
-                document.getElementById('userHeight').value = userHeight;
-                calculateStride();
+            
+            try {
+                let query = supabase
+                    .from('measurements')
+                    .select('created_at, bpm')
+                    .eq('session_id', activeSessionId)
+                    .order('created_at', { ascending: true });
+                
+                // Filtrer par période si spécifiée
+                if (minutes !== null) {
+                    const cutoffTime = new Date();
+                    cutoffTime.setMinutes(cutoffTime.getMinutes() - minutes);
+                    query = query.gte('created_at', cutoffTime.toISOString());
+                }
+                
+                const { data, error } = await query;
+                
+                if (error) {
+                    console.error("Erreur chargement historique:", error);
+                    return;
+                }
+                
+                if (data && data.length > 0) {
+                    historicalData = data;
+                    updateChartWithHistoricalData();
+                } else {
+                    console.log("Aucune donnée historique trouvée");
+                }
+            } catch (e) {
+                console.error("Erreur chargement données:", e);
+            }
+        }
+        
+        // Mettre à jour le graphique avec les données historiques
+        function updateChartWithHistoricalData() {
+            if (!chart || historicalData.length === 0) return;
+            
+            // Préparer les données pour le graphique
+            const chartData = historicalData.map(d => ({
+                x: new Date(d.created_at),
+                y: d.bpm
+            }));
+            
+            // Ajouter les données en temps réel si disponibles
+            const now = new Date();
+            bpmHistory.forEach((bpm, index) => {
+                const time = new Date(now.getTime() - (bpmHistory.length - index) * 1000);
+                chartData.push({ x: time, y: bpm });
+            });
+            
+            // Trier par date
+            chartData.sort((a, b) => a.x - b.x);
+            
+            // Mettre à jour le graphique
+            chart.data.datasets[0].data = chartData;
+            chart.update('none'); // Pas d'animation pour les mises à jour fréquentes
+        }
+        
+        // Fonction pour mettre à jour le graphique en temps réel
+        function updateChartRealtime(bpm) {
+            if (!chart) return;
+            
+            const now = new Date();
+            
+            // Ajouter la nouvelle valeur
+            bpmHistory.push(bpm);
+            labelsHistory.push(now);
+            
+            // Limiter à 50 points pour l'affichage temps réel (si période courte)
+            if (currentPeriod <= 60 && bpmHistory.length > 50) {
+                bpmHistory.shift();
+                labelsHistory.shift();
+            }
+            
+            // Si on affiche une période courte, utiliser seulement les données temps réel
+            if (currentPeriod <= 60) {
+                const chartData = bpmHistory.map((bpm, index) => ({
+                    x: labelsHistory[index],
+                    y: bpm
+                }));
+                chart.data.datasets[0].data = chartData;
             } else {
-                calculateStride(); // Default
+                // Pour les périodes longues, combiner historique + temps réel
+                updateChartWithHistoricalData();
             }
+            
+            chart.update('none');
+        }
+
+        // ============================================
+        // CONFIGURATION SUPABASE PAR DÉFAUT
+        // ============================================
+        // Ces valeurs sont chargées automatiquement au démarrage
+        // Modifiez-les selon votre configuration Supabase
+        const DEFAULT_SUPABASE_CONFIG = {
+            url: "https://runmhoagifqpthowjblv.supabase.co",
+            anon_key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ1bm1ob2FnaWZxcHRob3dqYmx2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5MTgwNjUsImV4cCI6MjA4MDQ5NDA2NX0.q71Cd5wCYlyb8XWWci2IV3u5QIHIsz8VNKlFPO1A018",
+            user_height: 175
+        };
+        
+        // URL de l'API locale (optionnel, pour charger la config depuis l'API)
+        const API_URLS = [
+            "http://localhost:8000",
+            "http://192.168.1.100:8000",  // Exemple IP locale
+            "http://127.0.0.1:8000"
+        ];
+        
+        // Load Settings on Start
+        window.onload = async function () {
+            let configLoaded = false;
+            
+            // 1. Essayer de charger depuis l'API locale (si disponible)
+            for (const apiUrl of API_URLS) {
+                try {
+                    const response = await fetch(`${apiUrl}/config`, { timeout: 2000 });
+                    if (response.ok) {
+                        const config = await response.json();
+                        if (config.supabase_url && config.supabase_key) {
+                            // Utiliser la config de l'API
+                            await initSupabase(config.supabase_url, config.supabase_key);
+                            userHeight = config.user_height || DEFAULT_SUPABASE_CONFIG.user_height;
+                            document.getElementById('supaUrl').value = config.supabase_url;
+                            document.getElementById('supaKey').value = config.supabase_key;
+                            document.getElementById('userHeight').value = userHeight;
+                            document.getElementById('apiUrl').value = apiUrl;
+                            calculateStride();
+                            console.log("✅ Config chargée depuis l'API:", apiUrl);
+                            configLoaded = true;
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    // Continuer avec l'URL suivante ou utiliser les valeurs par défaut
+                    continue;
+                }
+            }
+            
+            // 2. Si l'API n'est pas disponible, utiliser les valeurs par défaut hardcodées
+            if (!configLoaded) {
+                console.log("📱 Utilisation de la configuration Supabase par défaut");
+                await initSupabase(DEFAULT_SUPABASE_CONFIG.url, DEFAULT_SUPABASE_CONFIG.anon_key);
+                userHeight = DEFAULT_SUPABASE_CONFIG.user_height;
+                document.getElementById('supaUrl').value = DEFAULT_SUPABASE_CONFIG.url;
+                document.getElementById('supaKey').value = DEFAULT_SUPABASE_CONFIG.anon_key;
+                document.getElementById('userHeight').value = DEFAULT_SUPABASE_CONFIG.user_height;
+                calculateStride();
+            }
+            
+            // 3. Récupérer la session active depuis Supabase
+            if (supabase) {
+                await loadActiveSession();
+            }
+            
+            // 4. Synchroniser les données offline au démarrage si connecté
+            if (isOnline && supabase) {
+                setTimeout(() => syncOfflineData(), 2000); // Attendre 2s après le chargement
+            }
+            
+            // 5. Charger les données historiques pour le graphique
+            if (supabase && activeSessionId) {
+                setTimeout(() => loadChartData(currentPeriod), 1000);
+            }
+            
+            // 6. Afficher le statut de connexion
+            updateConnectionStatus();
 
             // Start GPS Watch
             if (navigator.geolocation) {
                 navigator.geolocation.watchPosition(handleGps, (e) => console.warn(e), { enableHighAccuracy: true });
             }
         };
+        
+        async function loadActiveSession() {
+            if (!supabase) return;
+            try {
+                // Récupérer la dernière session active (la plus récente avec session_id)
+                const { data, error } = await supabase
+                    .from('measurements')
+                    .select('session_id')
+                    .not('session_id', 'is', null)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .single();
+                
+                if (data && data.session_id) {
+                    activeSessionId = data.session_id;
+                    console.log("✅ Session active chargée:", activeSessionId);
+                } else {
+                    // Créer une nouvelle session
+                    activeSessionId = `session_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)}`;
+                    console.log("🆕 Nouvelle session créée:", activeSessionId);
+                }
+            } catch (e) {
+                // Créer une nouvelle session en cas d'erreur
+                activeSessionId = `session_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)}`;
+                console.log("🆕 Nouvelle session créée (fallback):", activeSessionId);
+            }
+        }
 
         function openSettings() { document.getElementById('settingsModal').style.display = 'flex'; }
         function closeSettings() { document.getElementById('settingsModal').style.display = 'none'; }
@@ -364,16 +796,29 @@
             console.log("Stride Length:", strideLength);
         }
 
-        function saveSettings() {
+        async function saveSettings() {
             const url = document.getElementById('supaUrl').value;
             const key = document.getElementById('supaKey').value;
             const h = document.getElementById('userHeight').value;
+            const apiUrl = document.getElementById('apiUrl').value;
 
-            localStorage.setItem('supaUrl', url);
-            localStorage.setItem('supaKey', key);
-            if (h) localStorage.setItem('userHeight', h);
+            // Sauvegarder dans localStorage (optionnel, car on utilise les valeurs par défaut)
+            if (url) localStorage.setItem('supaUrl', url);
+            if (key) localStorage.setItem('supaKey', key);
+            if (h) {
+                localStorage.setItem('userHeight', h);
+                userHeight = parseInt(h);
+                calculateStride();
+            }
+            if (apiUrl) localStorage.setItem('apiUrl', apiUrl);
 
-            window.location.reload(); // Reload to apply everything cleanly
+            // Réinitialiser Supabase avec les nouvelles credentials
+            if (url && key) {
+                await initSupabase(url, key);
+                await loadActiveSession();
+            }
+
+            closeSettings();
         }
 
         // HAVERSINE FORMULA (Distance in Meters)
@@ -396,7 +841,9 @@
             const lat = position.coords.latitude;
             const lon = position.coords.longitude;
 
-            // document.getElementById('gpsIcon').style.opacity = "1.0"; // UI later
+            // Activer l'icône GPS dans l'UI
+            document.getElementById('gpsActive').style.opacity = "1.0";
+            lastGpsTime = Date.now();
 
             if (lastGpsCoords) {
                 const dist = getDistanceFromLatLonInM(lastGpsCoords.lat, lastGpsCoords.lon, lat, lon);
@@ -409,6 +856,10 @@
                     const steps = Math.floor(dist / strideLength);
                     totalSteps += steps;
 
+                    // Mettre à jour l'UI
+                    document.getElementById('steps').innerText = Math.floor(totalSteps);
+                    document.getElementById('dist').innerText = totalDistanceKm.toFixed(2);
+
                     lastGpsCoords = { lat, lon };
                 }
             } else {
@@ -416,40 +867,106 @@
             }
         }
 
-        function initSupabase(url, key) {
+        async function initSupabase(url, key) {
             try {
+                // Vérifier que Supabase est chargé
+                if (typeof supabase === 'undefined') {
+                    console.error("Supabase library not loaded");
+                    return false;
+                }
                 // @ts-ignore
-                supabase = window.supabase.createClient(url, key);
-                console.log("Supabase Client Initialized");
+                supabase = supabase.createClient(url, key);
+                console.log("✅ Supabase Client Initialized");
                 document.getElementById('cloudStatus').style.opacity = "1";
-            } catch (e) { console.error("Supabase Init Error", e); }
+                document.getElementById('cloudStatus').style.color = "#007aff";
+                return true;
+            } catch (e) { 
+                console.error("❌ Supabase Init Error", e);
+                document.getElementById('cloudStatus').style.color = "red";
+                return false;
+            }
         }
 
         async function pushToCloud() {
-            if (!supabase || dataBuffer.length === 0) return;
+            if (dataBuffer.length === 0) return;
+            
+            // Si pas de connexion internet, sauvegarder en cache
+            if (!isOnline || !supabase) {
+                const cacheData = dataBuffer.map(d => ({
+                    created_at: d.created_at,
+                    timestamp: d.created_at, // Backup
+                    bpm: d.bpm,
+                    hrv: d.hrv,
+                    strain: d.strain,
+                    steps: d.steps,
+                    device: d.device || 'mobile_app'
+                }));
+                
+                saveToOfflineCache(cacheData);
+                dataBuffer = [];
+                return;
+            }
+
+            // Utiliser la session active (déjà chargée au démarrage)
+            let sessionId = activeSessionId;
+            if (!sessionId) {
+                // Si pas de session, en charger/créer une
+                await loadActiveSession();
+                sessionId = activeSessionId;
+            }
 
             const payload = dataBuffer.map(d => ({
-                created_at: d.timestamp,
+                created_at: d.created_at,
                 bpm: d.bpm,
                 hrv: d.hrv,
                 strain: d.strain,
                 steps: d.steps,
-                distance_km: d.distance_km,
-                device: d.device || 'iphone_web_v5'
+                session_id: sessionId,
+                device: d.device || 'mobile_app'
             }));
 
             // Clear buffer immediately to avoid duplicates if async lags
+            const bufferCopy = [...dataBuffer];
             dataBuffer = [];
 
-            const { error } = await supabase.from('measurements').insert(payload);
+            try {
+                const { error } = await supabase.from('measurements').insert(payload);
 
-            if (error) {
-                console.error("Cloud Upload Error", error);
-                document.getElementById('cloudStatus').style.color = "red";
-            } else {
-                console.log("Cloud Upload Success", payload.length);
-                document.getElementById('cloudStatus').style.color = "#007aff"; // Blue success
-                setTimeout(() => document.getElementById('cloudStatus').style.color = "white", 1000);
+                if (error) {
+                    console.error("Supabase Upload Error", error);
+                    document.getElementById('cloudStatus').style.color = "red";
+                    // Sauvegarder en cache en cas d'erreur
+                    const cacheData = bufferCopy.map(d => ({
+                        created_at: d.created_at,
+                        timestamp: d.created_at,
+                        bpm: d.bpm,
+                        hrv: d.hrv,
+                        strain: d.strain,
+                        steps: d.steps,
+                        device: d.device || 'mobile_app'
+                    }));
+                    saveToOfflineCache(cacheData);
+                } else {
+                    console.log("Supabase Upload Success", bufferCopy.length);
+                    document.getElementById('cloudStatus').style.color = "#007aff"; // Blue success
+                    setTimeout(() => document.getElementById('cloudStatus').style.color = "white", 1000);
+                    
+                    // Après un upload réussi, essayer de synchroniser le cache
+                    setTimeout(() => syncOfflineData(), 1000);
+                }
+            } catch (e) {
+                console.error("Erreur upload:", e);
+                // Sauvegarder en cache en cas d'exception
+                const cacheData = bufferCopy.map(d => ({
+                    created_at: d.created_at,
+                    timestamp: d.created_at,
+                    bpm: d.bpm,
+                    hrv: d.hrv,
+                    strain: d.strain,
+                    steps: d.steps,
+                    device: d.device || 'mobile_app'
+                }));
+                saveToOfflineCache(cacheData);
             }
         }
 
@@ -579,6 +1096,8 @@
 
                 // Update UI (Round)
                 document.getElementById('steps').innerText = Math.floor(totalSteps);
+                // Désactiver l'icône GPS si on utilise le fallback cardio
+                document.getElementById('gpsActive').style.opacity = "0.2";
             }
             // If GPS is active, UI is updated in handleGps
 
@@ -611,10 +1130,9 @@
             // -----------------------
 
             const now = new Date();
-            bpmHistory.push(hr);
-            labelsHistory.push(now.getSeconds());
-            if (bpmHistory.length > 50) { bpmHistory.shift(); labelsHistory.shift(); }
-            chart.update();
+            
+            // Mettre à jour le graphique avec la nouvelle fonction
+            updateChartRealtime(hr);
 
             // Store Local
             dataLog += `${now.toISOString()},${hr},${metrics.rmssd.toFixed(1)},${metrics.displayStrain},${Math.floor(totalSteps)}\n`;
@@ -626,6 +1144,7 @@
                 hrv: metrics.rmssd,
                 strain: metrics.displayStrain,
                 steps: Math.floor(totalSteps),
+                distance_km: totalDistanceKm,
                 device: 'iphone_web_v5'
             });
 
