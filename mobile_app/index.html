@@ -184,6 +184,23 @@
     <button id="exportBtn" class="btn"
         style="background-color: #007aff; display: none; box-shadow: 0 8px 20px rgba(0, 122, 255, 0.3);"
         onclick="exportCSV()">📄 EXPORTER CSV</button>
+    
+    <!-- ALARME / RÉVEIL -->
+    <div style="width: 100%; max-width: 400px; margin-top: 15px; margin-bottom: 15px;">
+        <div class="metric-box" style="padding: 15px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div>
+                    <div style="font-size: 0.9rem; color: var(--text-sub); margin-bottom: 5px;">⏰ RÉVEIL</div>
+                    <div id="alarmTime" style="font-size: 1.5rem; font-weight: 700;">--:--</div>
+                    <div id="alarmStatus" style="font-size: 0.7rem; color: #888; margin-top: 5px;">Désactivé</div>
+                </div>
+                <button id="alarmToggleBtn" onclick="toggleAlarm()" 
+                    style="background: #333; color: white; border: none; padding: 10px 20px; border-radius: 12px; font-size: 0.9rem; cursor: pointer; font-weight: 600;">
+                    Configurer
+                </button>
+            </div>
+        </div>
+    </div>
 
     <div class="status-text">
         <span id="statDot" class="status-dot"></span><span id="status">Déconnecté</span>
@@ -248,6 +265,45 @@
     <div style="margin-top: 10px; color: #555; font-size: 0.8rem;">Device Batt: <span id="batt">--</span></div>
 
     <div id="log"></div>
+
+    <!-- ALARM MODAL -->
+    <div id="alarmModal"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(10px); z-index: 200; align-items: center; justify-content: center;">
+        <div
+            style="background: #1c1c1e; padding: 30px; border-radius: 20px; width: 85%; max-width: 350px; overflow-y: auto; max-height: 80vh;">
+            <h3 style="margin-top: 0;">⏰ Configuration du Réveil</h3>
+            
+            <label style="display: block; text-align: left; font-size: 0.8rem; color: #888; margin-bottom: 5px;">Heure du réveil</label>
+            <input id="alarmTimeInput" type="time" value="07:00"
+                style="width: 100%; padding: 15px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #333; background: #000; color: white; font-size: 1.2rem;">
+            
+            <label style="display: block; text-align: left; font-size: 0.8rem; color: #888; margin-bottom: 5px;">
+                <input id="alarmEnabled" type="checkbox" checked style="margin-right: 8px;">
+                Activer le réveil
+            </label>
+            
+            <div style="background: rgba(0, 122, 255, 0.1); border: 1px solid #007aff; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-size: 0.8rem; color: #007aff;">
+                ⚠️ <b>Important:</b> L'alarme fait vibrer le WHOOP uniquement. Le Whoop doit être connecté pour que l'alarme fonctionne.
+            </div>
+            
+            <button onclick="saveAlarm()" class="btn" style="margin-bottom: 10px;">Enregistrer</button>
+            <button onclick="closeAlarmModal()"
+                style="background: none; border: none; color: #ff3b30; font-size: 1rem;">Annuler</button>
+        </div>
+    </div>
+    
+    <!-- ALARM RINGING MODAL -->
+    <div id="alarmRingingModal"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); backdrop-filter: blur(20px); z-index: 300; align-items: center; justify-content: center; flex-direction: column;">
+        <div style="text-align: center; padding: 30px;">
+            <div style="font-size: 4rem; margin-bottom: 20px;">⏰</div>
+            <div style="font-size: 2rem; font-weight: 700; margin-bottom: 10px;">C'EST L'HEURE !</div>
+            <div id="alarmRingingTime" style="font-size: 1.5rem; color: #888; margin-bottom: 30px;">07:00</div>
+            <button onclick="stopAlarm()" class="btn" style="font-size: 1.2rem; padding: 20px 40px;">
+                Arrêter
+            </button>
+        </div>
+    </div>
 
     <!-- SETTINGS MODAL -->
     <div id="settingsModal"
@@ -488,6 +544,337 @@
         let totalDistanceKm = 0.0;
         let lastGpsCoords = null; // {lat, lon}
         let lastGpsTime = 0;
+        
+        // ============================================
+        // SYSTÈME D'ALARME / RÉVEIL
+        // ============================================
+        let alarmTime = null; // Format: "HH:MM"
+        let alarmEnabled = false;
+        let alarmCheckInterval = null;
+        let alarmAudio = null;
+        let alarmRinging = false;
+        
+        // Initialiser l'alarme au chargement
+        function initAlarm() {
+            // Charger les paramètres depuis localStorage
+            const savedTime = localStorage.getItem('alarmTime');
+            const savedEnabled = localStorage.getItem('alarmEnabled') === 'true';
+            
+            if (savedTime) {
+                alarmTime = savedTime;
+                document.getElementById('alarmTimeInput').value = savedTime;
+            } else {
+                alarmTime = '07:00';
+                document.getElementById('alarmTimeInput').value = '07:00';
+            }
+            
+            alarmEnabled = savedEnabled;
+            document.getElementById('alarmEnabled').checked = savedEnabled;
+            
+            updateAlarmDisplay();
+            startAlarmCheck();
+            
+            // Demander les permissions de notification
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
+        }
+        
+        function updateAlarmDisplay() {
+            const timeEl = document.getElementById('alarmTime');
+            const statusEl = document.getElementById('alarmStatus');
+            const toggleBtn = document.getElementById('alarmToggleBtn');
+            
+            if (alarmTime) {
+                timeEl.textContent = alarmTime;
+            }
+            
+            if (alarmEnabled) {
+                statusEl.textContent = `Activé - ${alarmTime}`;
+                statusEl.style.color = '#32d74b';
+                toggleBtn.textContent = 'Désactiver';
+                toggleBtn.style.background = '#ff3b30';
+            } else {
+                statusEl.textContent = 'Désactivé';
+                statusEl.style.color = '#888';
+                toggleBtn.textContent = 'Configurer';
+                toggleBtn.style.background = '#333';
+            }
+        }
+        
+        function toggleAlarm() {
+            if (alarmEnabled) {
+                alarmEnabled = false;
+                stopAlarm();
+            } else {
+                openAlarmModal();
+            }
+            saveAlarmSettings();
+            updateAlarmDisplay();
+        }
+        
+        function openAlarmModal() {
+            document.getElementById('alarmModal').style.display = 'flex';
+        }
+        
+        function closeAlarmModal() {
+            document.getElementById('alarmModal').style.display = 'none';
+        }
+        
+        function saveAlarm() {
+            const timeInput = document.getElementById('alarmTimeInput').value;
+            const enabled = document.getElementById('alarmEnabled').checked;
+            
+            if (timeInput) {
+                alarmTime = timeInput;
+                alarmEnabled = enabled;
+                saveAlarmSettings();
+                updateAlarmDisplay();
+                closeAlarmModal();
+            }
+        }
+        
+        function saveAlarmSettings() {
+            localStorage.setItem('alarmTime', alarmTime);
+            localStorage.setItem('alarmEnabled', alarmEnabled.toString());
+        }
+        
+        function startAlarmCheck() {
+            // Vérifier toutes les secondes si c'est l'heure du réveil
+            if (alarmCheckInterval) {
+                clearInterval(alarmCheckInterval);
+            }
+            
+            alarmCheckInterval = setInterval(() => {
+                if (alarmEnabled && alarmTime && !alarmRinging) {
+                    const now = new Date();
+                    const [hours, minutes] = alarmTime.split(':');
+                    const alarmDate = new Date();
+                    alarmDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+                    
+                    // Vérifier si c'est l'heure exacte (avec une marge de 1 seconde)
+                    const currentTime = now.getHours() * 60 + now.getMinutes();
+                    const alarmTimeMinutes = parseInt(hours) * 60 + parseInt(minutes);
+                    const diff = Math.abs(currentTime - alarmTimeMinutes);
+                    
+                    // Sonner si on est dans la minute de l'alarme
+                    if (diff === 0 && now.getSeconds() < 10) {
+                        ringAlarm();
+                    }
+                }
+            }, 1000);
+        }
+        
+        async function vibrateWhoop() {
+            // Faire vibrer UNIQUEMENT le Whoop (pas le téléphone)
+            if (!server) {
+                console.log("❌ Whoop non connecté - Impossible de faire vibrer le Whoop");
+                alert("⚠️ Connectez d'abord le Whoop pour que l'alarme fonctionne !");
+                return false;
+            }
+            
+            try {
+                console.log("🔍 Recherche du service de vibration du Whoop...");
+                
+                // 1. Essayer le service d'alertes immédiates standard BLE (Immediate Alert Service)
+                // UUID: 00001802-0000-1000-8000-00805f9b34fb
+                // Caractéristique Alert Level: 00002a06-0000-1000-8000-00805f9b34fb
+                try {
+                    const alertService = await server.getPrimaryService('00001802-0000-1000-8000-00805f9b34fb');
+                    const alertChar = await alertService.getCharacteristic('00002a06-0000-1000-8000-00805f9b34fb');
+                    
+                    // Valeurs possibles: 0 = Pas d'alerte, 1 = Alerte douce, 2 = Alerte forte
+                    const alertData = new Uint8Array([2]); // Alerte forte = vibration
+                    await alertChar.writeValue(alertData);
+                    console.log("✅ Vibration Whoop activée via service d'alertes standard");
+                    
+                    // Répéter la vibration plusieurs fois
+                    setTimeout(() => alertChar.writeValue(new Uint8Array([2])), 500);
+                    setTimeout(() => alertChar.writeValue(new Uint8Array([2])), 1000);
+                    setTimeout(() => alertChar.writeValue(new Uint8Array([0])), 2000); // Arrêter
+                    
+                    return true;
+                } catch (e) {
+                    console.log("⚠️ Service d'alertes standard non disponible:", e.message);
+                }
+                
+                // 2. Lister tous les services disponibles pour trouver celui de vibration
+                try {
+                    const services = await server.getPrimaryServices();
+                    console.log(`📡 ${services.length} service(s) trouvé(s) sur le Whoop`);
+                    
+                    for (const service of services) {
+                        const serviceUUID = service.uuid;
+                        console.log(`   Service: ${serviceUUID}`);
+                        
+                        // Essayer le service propriétaire Whoop découvert
+                        if (serviceUUID.includes('61080003') || serviceUUID.includes('8d6d-82b8')) {
+                            try {
+                                const characteristics = await service.getCharacteristics();
+                                console.log(`   ${characteristics.length} caractéristique(s) dans ce service`);
+                                
+                                for (const char of characteristics) {
+                                    try {
+                                        // Essayer différentes commandes de vibration
+                                        const commands = [
+                                            new Uint8Array([0x01]), // Simple
+                                            new Uint8Array([0x02]), // Double
+                                            new Uint8Array([0x01, 0x02]), // Pattern
+                                            new Uint8Array([0xFF]), // Max
+                                        ];
+                                        
+                                        for (const cmd of commands) {
+                                            try {
+                                                await char.writeValue(cmd);
+                                                console.log(`✅ Commande envoyée: ${Array.from(cmd).map(x => '0x' + x.toString(16)).join(' ')}`);
+                                                return true;
+                                            } catch (e) {
+                                                // Continuer avec la commande suivante
+                                            }
+                                        }
+                                    } catch (e) {
+                                        // Caractéristique non accessible en écriture
+                                    }
+                                }
+                            } catch (e) {
+                                console.log(`   Erreur lecture caractéristiques: ${e.message}`);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erreur scan services:", e);
+                }
+                
+                // 3. Essayer le service d'alertes via nom (si disponible)
+                try {
+                    const alertService = await server.getPrimaryService('alert_notification');
+                    const alertChar = await alertService.getCharacteristic('alert_level');
+                    await alertChar.writeValue(new Uint8Array([2]));
+                    console.log("✅ Vibration via service d'alertes (nom)");
+                    return true;
+                } catch (e) {
+                    // Service non disponible
+                }
+                
+                console.error("❌ Aucun service de vibration trouvé sur le Whoop");
+                return false;
+                
+            } catch (e) {
+                console.error("❌ Erreur vibration Whoop:", e);
+                return false;
+            }
+        }
+        
+        function ringAlarm() {
+            if (alarmRinging) return;
+            
+            alarmRinging = true;
+            
+            // Afficher le modal d'alarme
+            document.getElementById('alarmRingingModal').style.display = 'flex';
+            document.getElementById('alarmRingingTime').textContent = alarmTime;
+            
+            // Notification du navigateur
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('⏰ Réveil Whoop', {
+                    body: `Il est ${alarmTime} ! C'est l'heure de se réveiller !`,
+                    icon: 'https://cdn-icons-png.flaticon.com/512/2964/2964514.png',
+                    badge: 'https://cdn-icons-png.flaticon.com/512/2964/2964514.png',
+                    tag: 'whoop-alarm',
+                    requireInteraction: true
+                });
+            }
+            
+            // Faire vibrer UNIQUEMENT le Whoop (pas le téléphone)
+            vibrateWhoop().then(success => {
+                if (success) {
+                    console.log("✅ Whoop a vibré !");
+                } else {
+                    console.log("❌ Impossible de faire vibrer le Whoop - Vérifiez la connexion");
+                    // Afficher un message si le Whoop n'est pas connecté
+                    if (!server) {
+                        document.getElementById('alarmRingingModal').innerHTML = `
+                            <div style="text-align: center; padding: 30px;">
+                                <div style="font-size: 4rem; margin-bottom: 20px;">⚠️</div>
+                                <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 10px;">Whoop Non Connecté</div>
+                                <div style="font-size: 1rem; color: #888; margin-bottom: 30px;">
+                                    Connectez le Whoop pour que l'alarme fonctionne
+                                </div>
+                                <button onclick="stopAlarm()" class="btn" style="font-size: 1.2rem; padding: 20px 40px;">
+                                    OK
+                                </button>
+                            </div>
+                        `;
+                    }
+                }
+            });
+            
+            // Son de réveil léger (optionnel, peut être désactivé)
+            // playAlarmSound(); // Désactivé pour se concentrer sur la vibration Whoop
+        }
+        
+        function playAlarmSound() {
+            try {
+                // Créer un contexte audio
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Fonction pour créer un beep
+                function beep(frequency, duration) {
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    oscillator.frequency.value = frequency;
+                    oscillator.type = 'sine';
+                    
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+                    
+                    oscillator.start(audioContext.currentTime);
+                    oscillator.stop(audioContext.currentTime + duration);
+                }
+                
+                // Répéter le son toutes les secondes
+                const alarmInterval = setInterval(() => {
+                    if (!alarmRinging) {
+                        clearInterval(alarmInterval);
+                        return;
+                    }
+                    // Double beep
+                    beep(800, 0.2);
+                    setTimeout(() => beep(1000, 0.2), 300);
+                }, 1000);
+                
+                // Arrêter après 5 minutes max
+                setTimeout(() => {
+                    if (alarmRinging) {
+                        stopAlarm();
+                    }
+                }, 300000);
+                
+            } catch (e) {
+                console.error("Erreur lecture audio:", e);
+            }
+        }
+        
+        async function stopAlarm() {
+            alarmRinging = false;
+            document.getElementById('alarmRingingModal').style.display = 'none';
+            
+            // Arrêter la vibration du Whoop si connecté
+            if (server) {
+                try {
+                    const alertService = await server.getPrimaryService('00001802-0000-1000-8000-00805f9b34fb');
+                    const alertChar = await alertService.getCharacteristic('00002a06-0000-1000-8000-00805f9b34fb');
+                    await alertChar.writeValue(new Uint8Array([0])); // 0 = arrêter l'alerte
+                    console.log("✅ Vibration Whoop arrêtée");
+                } catch (e) {
+                    // Ignorer si le service n'est pas disponible
+                }
+            }
+        }
 
         // Init ChartJS (Smoother)
         const ctx = document.getElementById('bpmChart').getContext('2d');
@@ -753,6 +1140,9 @@
             
             // 6. Afficher le statut de connexion
             updateConnectionStatus();
+            
+            // 7. Initialiser l'alarme
+            initAlarm();
 
             // Start GPS Watch
             if (navigator.geolocation) {
@@ -979,7 +1369,12 @@
             try {
                 const device = await navigator.bluetooth.requestDevice({
                     filters: [{ services: ['heart_rate'] }],
-                    optionalServices: ['battery_service', 'heart_rate']
+                    optionalServices: [
+                        'battery_service', 
+                        'heart_rate',
+                        '00001802-0000-1000-8000-00805f9b34fb', // Immediate Alert Service (pour vibration)
+                        'alert_notification' // Service d'alertes alternatif
+                    ]
                 });
 
                 document.getElementById('status').innerText = "Connexion...";
