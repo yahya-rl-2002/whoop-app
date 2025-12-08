@@ -208,39 +208,169 @@
         <span id="offlineIndicator" style="font-size: 0.7rem; margin-left: 5px; opacity: 0; color: #ff9f0a;"></span>
     </div>
 
-    <!-- MAIN GRID -->
+        /* ... CSS Additions ... */
+        .ring-container {
+            position: relative;
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 10px;
+        }
+        .ring-bg {
+            width: 100%; height: 100%;
+            border-radius: 50%;
+            border: 8px solid rgba(255,255,255,0.1);
+            box-sizing: border-box;
+        }
+        .ring-progress {
+            position: absolute; top:0; left:0;
+            width: 100%; height: 100%;
+            border-radius: 50%;
+            box-sizing: border-box;
+            border: 8px solid #bf5af2;
+            border-top-color: transparent;
+            border-left-color: transparent; /* Simple CSS trick, Conic is better */
+            transform: rotate(-45deg);
+            transition: all 1s ease;
+        }
+        .ring-text {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.8rem; font-weight: bold; color:white;
+        }
+
+        /* NEON MAP */
+        #pathCanvas {
+            width: 100%; height: 100px;
+            background: #000;
+            border-radius: 8px;
+            border: 1px solid #333;
+            box-shadow: 0 0 10px rgba(191, 90, 242, 0.2);
+        }
+    </style>
+    <!-- ... -->
+
+    <!-- UPDATED GRID: Merging Steps/Dist into One Big Card -->
+    <!-- REPLACE PREVIOUS STEPS/DIST -->
     <div class="grid" style="grid-template-columns: 1fr 1fr;">
-        <!-- BPM -->
-        <div class="metric-box">
-            <div id="bpm" class="big-num">--</div>
-            <div class="label"><span id="liveIcon"></span> BPM</div>
+        <!-- ... BPM, Strain, HRV, Battery kept ... -->
+        
+        <!-- NEW ACTIVITY CARD (Span 2) -->
+        <div class="metric-box" style="grid-column: span 2; display: flex; flex-direction: row; justify-content: space-between; align-items: center; text-align: left;">
+            
+            <!-- LEFT: RING & STATS -->
+            <div style="flex: 1; text-align: center;">
+                <div class="ring-container">
+                     <!-- Conic Gradient is easier for dynamic ring -->
+                    <div id="stepRing" style="width:80px; height:80px; border-radius:50%; background: conic-gradient(#bf5af2 0%, #333 0%); position:relative; display:flex; align-items:center; justify-content:center;">
+                        <div style="width:64px; height:64px; border-radius:50%; background:#1c1c1e; display:flex; align-items:center; justify-content:center;">
+                            <span id="stepsSmall" style="font-weight:bold; color:white; font-size:0.9rem;">0</span>
+                        </div>
+                    </div>
+                </div>
+                <div style="font-size:0.7rem; color:#888; margin-top:5px;">OBJECTIF 10K</div>
+            </div>
+
+            <!-- MIDDLE: METRICS -->
+            <div style="flex: 1; padding: 0 10px;">
+                <div class="big-num" id="steps" style="font-size:2rem; color:#fff; display:none;">0</div> <!-- Hidden, using ring text -->
+                
+                <div style="margin-bottom:8px;">
+                    <div class="label">DISTANCE</div>
+                    <div style="font-weight:bold; font-size:1.2rem; color:#fff"><span id="dist">0.00</span> <span style="font-size:0.8rem; color:#666">KM</span></div>
+                </div>
+                
+                <div>
+                    <div class="label">CALORIES</div>
+                    <div style="font-weight:bold; font-size:1.2rem; color:#ff3b30"><span id="kcal">0</span> <span style="font-size:0.8rem; color:#666">KCAL</span></div>
+                </div>
+            </div>
+
+            <!-- RIGHT: MAP -->
+            <div style="flex: 1.5; height: 100%; display:flex; flex-direction:column; justify-content:center;">
+                <canvas id="pathCanvas" width="150" height="100"></canvas>
+                <div class="label" style="text-align:center; margin-top:5px;">LIVE TRACK <span style="color:#bf5af2">●</span></div>
+            </div>
+
         </div>
-        <!-- STRAIN -->
-        <div class="metric-box">
-            <div id="strain" class="big-num" style="color: #007aff;">0.0</div>
-            <div class="label">STRAIN</div>
-        </div>
-        <!-- RECOVERY (HRV) -->
-        <div class="metric-box">
-            <div id="hrv" class="big-num" style="color: #ff9f0a;">--</div>
-            <div class="label">HRV (ms)</div>
-        </div>
-        <!-- BODY BATTERY -->
-        <div class="metric-box">
-            <div id="bodyBat" class="big-num" style="color: #32d74b;">80%</div>
-            <div class="label">BATTERIE</div>
-        </div>
-        <!-- STEPS -->
-        <div class="metric-box">
-            <div id="steps" class="big-num" style="color: #bf5af2;">0</div>
-            <div class="label">PAS <span id="gpsActive" style="opacity:0.2">📍</span></div>
-        </div>
-        <!-- DISTANCE -->
-        <div class="metric-box">
-            <div id="dist" class="big-num" style="color: #fff;">0.0</div>
-            <div class="label">KM</div>
-        </div>
+
     </div>
+
+    <!-- ... -->
+    <script>
+        // ...
+        let gpsHistory = []; // {x, y} normalized? No, store lat/lon
+        let userWeight = 75; // kg, default
+
+        function updateStepRing() {
+            let pct = (totalSteps / 10000) * 100;
+            document.getElementById('stepRing').style.background = `conic-gradient(#bf5af2 ${pct}%, #333 ${pct}%)`;
+            document.getElementById('stepsSmall').innerText = Math.floor(totalSteps);
+            
+            // Calories (Metabolic roughly 0.04 kcal/step)
+            let kcal = totalSteps * 0.04;
+            document.getElementById('kcal').innerText = Math.floor(kcal);
+        }
+
+        function drawPath() {
+             const c = document.getElementById('pathCanvas');
+             const ctx = c.getContext('2d');
+             ctx.fillStyle = "#000";
+             ctx.fillRect(0,0,c.width, c.height);
+             
+             if(gpsHistory.length < 2) return;
+
+             // Normalize
+             let minLat=999, maxLat=-999, minLon=999, maxLon=-999;
+             gpsHistory.forEach(p => {
+                 if(p.lat < minLat) minLat = p.lat;
+                 if(p.lat > maxLat) maxLat = p.lat;
+                 if(p.lon < minLon) minLon = p.lon;
+                 if(p.lon > maxLon) maxLon = p.lon;
+             });
+             
+             const margin = 10;
+             const w = c.width - (margin*2);
+             const h = c.height - (margin*2);
+             
+             // Scale factors
+             let latRange = maxLat - minLat;
+             let lonRange = maxLon - minLon;
+             if(latRange === 0) latRange = 0.0001;
+             if(lonRange === 0) lonRange = 0.0001;
+             
+             ctx.strokeStyle = "#bf5af2";
+             ctx.lineWidth = 3;
+             ctx.lineCap = "round";
+             ctx.shadowBlur = 10;
+             ctx.shadowColor = "#bf5af2";
+             
+             ctx.beginPath();
+             gpsHistory.forEach((p, i) => {
+                 // Simple Equirectangular projection for small area
+                 let x = margin + ((p.lon - minLon) / lonRange) * w;
+                 let y = margin + ((p.lat - minLat) / latRange) * h;
+                 // Invert Y (Lat goes up, Y goes down)
+                 y = c.height - y; 
+                 
+                 if(i===0) ctx.moveTo(x, y);
+                 else ctx.lineTo(x, y);
+             });
+             ctx.stroke();
+             
+             // Draw user dot
+             // ...
+        }
+
+        // Hook into handleGps
+        // ... inside handleGps ...
+                    lastGpsCoords = {lat, lon};
+                    gpsHistory.push({lat, lon});
+                    drawPath();
+                    updateStepRing();
+        // ... 
+        
+        // Also call updateStepRing in processMetrics (fallback steps)
+
 
     <!-- STRESS ALERT -->
     <div id="stressAlert"
@@ -674,86 +804,53 @@
             }
             
             try {
-                console.log("🔍 Recherche du service de vibration du Whoop...");
+                console.log("🔍 Activation de la vibration du Whoop...");
                 
-                // 1. Essayer le service d'alertes immédiates standard BLE (Immediate Alert Service)
-                // UUID: 00001802-0000-1000-8000-00805f9b34fb
-                // Caractéristique Alert Level: 00002a06-0000-1000-8000-00805f9b34fb
-                try {
-                    const alertService = await server.getPrimaryService('00001802-0000-1000-8000-00805f9b34fb');
-                    const alertChar = await alertService.getCharacteristic('00002a06-0000-1000-8000-00805f9b34fb');
-                    
-                    // Valeurs possibles: 0 = Pas d'alerte, 1 = Alerte douce, 2 = Alerte forte
-                    const alertData = new Uint8Array([2]); // Alerte forte = vibration
-                    await alertChar.writeValue(alertData);
-                    console.log("✅ Vibration Whoop activée via service d'alertes standard");
-                    
-                    // Répéter la vibration plusieurs fois
-                    setTimeout(() => alertChar.writeValue(new Uint8Array([2])), 500);
-                    setTimeout(() => alertChar.writeValue(new Uint8Array([2])), 1000);
-                    setTimeout(() => alertChar.writeValue(new Uint8Array([0])), 2000); // Arrêter
-                    
-                    return true;
-                } catch (e) {
-                    console.log("⚠️ Service d'alertes standard non disponible:", e.message);
-                }
+                // Service propriétaire Whoop découvert lors du scan
+                // Service: 61080001-8d6d-82b8-614a-1c8cb0f8dcc6
+                // Caractéristique en écriture: 61080002-8d6d-82b8-614a-1c8cb0f8dcc6
+                const WHOOP_SERVICE_UUID = '61080001-8d6d-82b8-614a-1c8cb0f8dcc6';
+                const WHOOP_VIBRATION_CHAR_UUID = '61080002-8d6d-82b8-614a-1c8cb0f8dcc6';
                 
-                // 2. Lister tous les services disponibles pour trouver celui de vibration
                 try {
-                    const services = await server.getPrimaryServices();
-                    console.log(`📡 ${services.length} service(s) trouvé(s) sur le Whoop`);
+                    const whoopService = await server.getPrimaryService(WHOOP_SERVICE_UUID);
+                    const vibrationChar = await whoopService.getCharacteristic(WHOOP_VIBRATION_CHAR_UUID);
                     
-                    for (const service of services) {
-                        const serviceUUID = service.uuid;
-                        console.log(`   Service: ${serviceUUID}`);
+                    console.log("✅ Service propriétaire Whoop trouvé !");
+                    
+                    // Essayer différentes commandes de vibration (basées sur les tests)
+                    const vibrationCommands = [
+                        new Uint8Array([0x01]),  // Vibration simple
+                        new Uint8Array([0x02]),  // Vibration double
+                        new Uint8Array([0x03]),  // Vibration triple
+                    ];
+                    
+                    // Envoyer plusieurs vibrations pour être sûr
+                    for (let i = 0; i < 3; i++) {
+                        const cmd = vibrationCommands[i % vibrationCommands.length];
+                        await vibrationChar.writeValue(cmd);
+                        console.log(`✅ Commande vibration ${i+1} envoyée: ${Array.from(cmd).map(x => '0x' + x.toString(16).padStart(2, '0')).join(' ')}`);
                         
-                        // Essayer le service propriétaire Whoop découvert
-                        if (serviceUUID.includes('61080003') || serviceUUID.includes('8d6d-82b8')) {
-                            try {
-                                const characteristics = await service.getCharacteristics();
-                                console.log(`   ${characteristics.length} caractéristique(s) dans ce service`);
-                                
-                                for (const char of characteristics) {
-                                    try {
-                                        // Essayer différentes commandes de vibration
-                                        const commands = [
-                                            new Uint8Array([0x01]), // Simple
-                                            new Uint8Array([0x02]), // Double
-                                            new Uint8Array([0x01, 0x02]), // Pattern
-                                            new Uint8Array([0xFF]), // Max
-                                        ];
-                                        
-                                        for (const cmd of commands) {
-                                            try {
-                                                await char.writeValue(cmd);
-                                                console.log(`✅ Commande envoyée: ${Array.from(cmd).map(x => '0x' + x.toString(16)).join(' ')}`);
-                                                return true;
-                                            } catch (e) {
-                                                // Continuer avec la commande suivante
-                                            }
-                                        }
-                                    } catch (e) {
-                                        // Caractéristique non accessible en écriture
-                                    }
-                                }
-                            } catch (e) {
-                                console.log(`   Erreur lecture caractéristiques: ${e.message}`);
-                            }
-                        }
+                        // Attendre un peu entre chaque vibration
+                        await new Promise(resolve => setTimeout(resolve, 300));
                     }
-                } catch (e) {
-                    console.error("Erreur scan services:", e);
-                }
-                
-                // 3. Essayer le service d'alertes via nom (si disponible)
-                try {
-                    const alertService = await server.getPrimaryService('alert_notification');
-                    const alertChar = await alertService.getCharacteristic('alert_level');
-                    await alertChar.writeValue(new Uint8Array([2]));
-                    console.log("✅ Vibration via service d'alertes (nom)");
+                    
+                    console.log("✅ Vibration Whoop activée !");
                     return true;
+                    
                 } catch (e) {
-                    // Service non disponible
+                    console.error("❌ Erreur avec service propriétaire:", e);
+                    
+                    // Fallback: Essayer le service d'alertes standard (peu probable qu'il existe)
+                    try {
+                        const alertService = await server.getPrimaryService('00001802-0000-1000-8000-00805f9b34fb');
+                        const alertChar = await alertService.getCharacteristic('00002a06-0000-1000-8000-00805f9b34fb');
+                        await alertChar.writeValue(new Uint8Array([2]));
+                        console.log("✅ Vibration via service d'alertes standard");
+                        return true;
+                    } catch (e2) {
+                        console.error("❌ Service d'alertes standard non disponible:", e2);
+                    }
                 }
                 
                 console.error("❌ Aucun service de vibration trouvé sur le Whoop");
@@ -866,12 +963,24 @@
             // Arrêter la vibration du Whoop si connecté
             if (server) {
                 try {
-                    const alertService = await server.getPrimaryService('00001802-0000-1000-8000-00805f9b34fb');
-                    const alertChar = await alertService.getCharacteristic('00002a06-0000-1000-8000-00805f9b34fb');
-                    await alertChar.writeValue(new Uint8Array([0])); // 0 = arrêter l'alerte
+                    // Essayer d'arrêter via le service propriétaire
+                    const WHOOP_SERVICE_UUID = '61080001-8d6d-82b8-614a-1c8cb0f8dcc6';
+                    const WHOOP_VIBRATION_CHAR_UUID = '61080002-8d6d-82b8-614a-1c8cb0f8dcc6';
+                    
+                    const whoopService = await server.getPrimaryService(WHOOP_SERVICE_UUID);
+                    const vibrationChar = await whoopService.getCharacteristic(WHOOP_VIBRATION_CHAR_UUID);
+                    await vibrationChar.writeValue(new Uint8Array([0x00])); // 0 = arrêter
                     console.log("✅ Vibration Whoop arrêtée");
                 } catch (e) {
-                    // Ignorer si le service n'est pas disponible
+                    // Essayer le service standard en fallback
+                    try {
+                        const alertService = await server.getPrimaryService('00001802-0000-1000-8000-00805f9b34fb');
+                        const alertChar = await alertService.getCharacteristic('00002a06-0000-1000-8000-00805f9b34fb');
+                        await alertChar.writeValue(new Uint8Array([0]));
+                        console.log("✅ Vibration arrêtée (service standard)");
+                    } catch (e2) {
+                        // Ignorer si aucun service n'est disponible
+                    }
                 }
             }
         }
@@ -1372,8 +1481,8 @@
                     optionalServices: [
                         'battery_service', 
                         'heart_rate',
-                        '00001802-0000-1000-8000-00805f9b34fb', // Immediate Alert Service (pour vibration)
-                        'alert_notification' // Service d'alertes alternatif
+                        '61080001-8d6d-82b8-614a-1c8cb0f8dcc6', // Service propriétaire Whoop (vibration)
+                        '00001802-0000-1000-8000-00805f9b34fb' // Immediate Alert Service (fallback)
                     ]
                 });
 
