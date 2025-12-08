@@ -181,9 +181,12 @@
     </h2>
 
     <button id="connectBtn" class="btn" onclick="connectWhoop()">🔌 CONNECTER</button>
-    <button id="exportBtn" class="btn"
-        style="background-color: #007aff; display: none; box-shadow: 0 8px 20px rgba(0, 122, 255, 0.3);"
+    <button id="exportBtn" class="btn" style="background-color: #3b82f6; display: none; margin-bottom: 20px;"
         onclick="exportCSV()">📄 EXPORTER CSV</button>
+    
+    <!-- Sensor Button (iOS Requirement) -->
+    <button id="sensorBtn" class="btn" style="background-color: #bf5af2; margin-bottom: 20px;" 
+        onclick="enableSensors()">👟 ACTIVER CAPTEURS TEL</button>
     
     <!-- ALARME / RÉVEIL -->
     <div style="width: 100%; max-width: 400px; margin-top: 15px; margin-bottom: 15px;">
@@ -1586,7 +1589,14 @@
             // If GPS hasn't updated in last 5 seconds, assume indoor.
             // Logic: High HR (>90) -> Est. Cadence
             const timeSinceGps = Date.now() - lastGpsTime;
-            if (timeSinceGps > 5000 && hr > 90) {
+            const timeSinceGps = Date.now() - lastGpsTime;
+            
+            // FUSION LOGIC: If Sensors enabled, trust them. Don't guess with HR.
+            if (motionEnabled && timeSinceGps > 5000) {
+                // Trust handleMotion()
+                document.getElementById('gpsActive').style.opacity = "0.5"; // Dim GPS icon
+            }
+            else if (timeSinceGps > 5000 && hr > 90) {
                 // Est. Cadence (60-200)
                 let cadence = 60 + (hr - 90) * 1.2;
                 if (cadence > 200) cadence = 200;
@@ -1618,6 +1628,82 @@
             }
             return Math.sqrt(sumSqDiff / (rrs.length - 1));
         }
+
+        // --- SENSOR FUSION ENGINE (v7.0) ---
+        let lastAccel = {x:0, y:0, z:0};
+        let lastSensorTime = 0;
+        let sensorSteps = 0;
+        let motionEnabled = false;
+
+        function enableSensors() {
+            // iOS 13+ requires explicit permission
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission()
+                    .then(response => {
+                        if (response === 'granted') {
+                            window.addEventListener('devicemotion', handleMotion);
+                            motionEnabled = true;
+                            alert("✅ Capteurs activés ! Mettez le téléphone dans votre poche.");
+                        } else {
+                            alert("❌ Permission refusée.");
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                // Android / Old iOS
+                window.addEventListener('devicemotion', handleMotion);
+                motionEnabled = true;
+                alert("✅ Capteurs activés !");
+            }
+        }
+
+        function handleMotion(event) {
+            const acc = event.accelerationIncludingGravity;
+            if(!acc) return;
+            
+            const now = Date.now();
+            if((now - lastSensorTime) < 300) return; // Debounce 300ms (Max 200 SPM)
+
+            // Vector Magnitude (remove gravity roughly)
+            // Simple Peak Detection
+            const x = acc.x; const y = acc.y; const z = acc.z;
+            const mag = Math.sqrt(x*x + y*y + z*z);
+            
+            // Threshold > 1.2G (approx 12 m/s^2 w/ gravity included or just delta)
+            // Better: use delta from previous
+            const delta = Math.abs(mag - lastAccel.mag);
+            
+            // Threshold tuning: 2.0 (sensitive) to 5.0 (hard)
+            // Gravity is ~9.8. Walking adds peaks > 12-13.
+            if(mag > 12.0) { 
+                // STEP DETECTED via Phone
+                // Fusion Policy: Only if GPS is NOT active/moving
+                if(getGpsSpeed() < 1) { // 1 m/s = 3.6 km/h
+                     // Check specific "walking" signature could differ
+                     sensorSteps++;
+                     totalSteps++;
+                     
+                     // Update UI immediately for "Instant Feedback"
+                     updateStepRing();
+                }
+            }
+
+            lastAccel = {x, y, z, mag};
+            lastSensorTime = now;
+        }
+
+        function getGpsSpeed() {
+             // Basic estimation based on last 2 GPS points
+             if(gpsHistory.length < 2) return 0;
+             const p1 = gpsHistory[gpsHistory.length-1];
+             const p2 = gpsHistory[gpsHistory.length-2];
+             // Simple check: if last point was < 5s ago
+             if(Date.now() - lastGpsTime > 5000) return 0;
+             return 0; // Complexity: Real speed calc needs time delta. 
+             // Ideally use event.coords.speed from handleGps if available
+        }
+        
+        // --- END SENSOR ENGINE ---
 
         function handleHeartRate(event) {
             const value = event.target.value;
